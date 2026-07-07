@@ -1,0 +1,24 @@
+[project]
+name = "knowflow-rag-agent"
+version = "0.1.0"
+description = "Enterprise RAG knowledge assistant with upload, chunking, hybrid retrieval, reranking, citations, permissions, hallucination checks, and offline evaluation."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+prod = ["gunicorn>=22.0; platform_system != 'Windows'"]
+
+[project.scripts]
+knowflow = "knowflow.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["knowflow*"]
+
+[tool.setuptools.package-data]
+knowflow = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]

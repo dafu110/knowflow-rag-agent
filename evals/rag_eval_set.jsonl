@@ -1,0 +1,32 @@
+{"question":"销售合同审批需要哪些材料？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["客户主体信息","合同正文","报价单","付款条款","交付计划","风险说明"]}
+{"question":"合同提交前要准备什么附件清单？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["客户主体信息","合同正文","报价单","付款条款"]}
+{"question":"销售合同超过 50 万元怎么审批？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["业务负责人","财务","法务负责人"]}
+{"question":"标准合同金额不超过 50 万元由谁审批？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["销售经理","法务专员"]}
+{"question":"合同为什么会被退回？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["客户名称","营业执照","报价单版本","付款账期"]}
+{"question":"销售提交前备注里要写哪些信息？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["客户背景","预计签约时间","关键风险"]}
+{"question":"法律角色能否查看销售合同审批指南？","user":"li","roles":["legal"],"expected_sources":["sales_contract.md"],"expected_terms":["销售合同","审批"]}
+{"question":"工程师能查看销售合同审批材料吗？","user":"dev","roles":["engineering"],"expected_sources":[],"forbidden_sources":["sales_contract.md"],"expected_terms":[]}
+{"question":"超过 10000 元的费用报销由谁审批？","user":"bob","roles":["engineering"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["部门负责人审批"]}
+{"question":"单笔 3000 元以上的费用需要谁复核？","user":"bob","roles":["engineering"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["直属负责人","财务复核"]}
+{"question":"差旅费用报销需要哪些材料？","user":"bob","roles":["engineering"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["发票","行程单","出差申请","费用明细"]}
+{"question":"餐饮招待费用还要补充什么？","user":"alice","roles":["sales"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["客户名单","业务目的说明"]}
+{"question":"报销最晚什么时候提交？","user":"bob","roles":["engineering"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["费用发生后 30 天内"]}
+{"question":"跨季度费用报销有什么时效要求？","user":"bob","roles":["engineering"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["季度结账前","额外说明原因"]}
+{"question":"没有 finance 角色的工程师能查报销制度吗？","user":"bob","roles":["engineering"],"expected_sources":["reimbursement_policy.md"],"expected_terms":["报销"]}
+{"question":"P0 故障的响应时间和恢复目标是什么？","user":"chen","roles":["support"],"expected_sources":["support_sla.md"],"expected_terms":["15 分钟","4 小时"]}
+{"question":"P1 故障多久响应，多久恢复？","user":"chen","roles":["support"],"expected_sources":["support_sla.md"],"expected_terms":["30 分钟","8 小时"]}
+{"question":"P2 问题的响应时间是什么？","user":"chen","roles":["support"],"expected_sources":["support_sla.md"],"expected_terms":["4 小时"]}
+{"question":"P3 咨询类问题多久响应？","user":"chen","roles":["support"],"expected_sources":["support_sla.md"],"expected_terms":["1 个工作日"]}
+{"question":"P0 或 P1 超过恢复目标后要升级给谁？","user":"chen","roles":["support"],"expected_sources":["support_sla.md"],"expected_terms":["研发值班负责人","客户成功负责人"]}
+{"question":"故障升级后多久同步一次进展？","user":"chen","roles":["support"],"expected_sources":["support_sla.md"],"expected_terms":["每 30 分钟"]}
+{"question":"销售角色可以查看 SLA 分级吗？","user":"alice","roles":["sales"],"expected_sources":["support_sla.md"],"expected_terms":["SLA","响应时间"]}
+{"question":"客户敏感数据的临时授权需要记录哪些信息？","user":"alice","roles":["sales"],"expected_sources":[],"forbidden_sources":["security_access.md"],"expected_terms":[]}
+{"question":"安全团队查询临时授权记录字段有哪些？","user":"ciso","roles":["security"],"expected_sources":["security_access.md"],"expected_terms":["申请人","审批人","授权范围","开始时间","结束时间"]}
+{"question":"下载客户明细数据需要做什么确认？","user":"ciso","roles":["security"],"expected_sources":["security_access.md"],"expected_terms":["二次确认","审计日志","下载原因"]}
+{"question":"员工转岗或离职时权限什么时候回收？","user":"ciso","roles":["security"],"expected_sources":["security_access.md"],"expected_terms":["当天回收","客户数据访问权限"]}
+{"question":"权限回收记录需要保留多久？","user":"ciso","roles":["security"],"expected_sources":["security_access.md"],"expected_terms":["至少两年"]}
+{"question":"普通销售能查客户密钥或安全事件处置细节吗？","user":"alice","roles":["sales"],"expected_sources":[],"forbidden_sources":["security_access.md"],"expected_terms":[]}
+{"question":"合同审批里 P0 的恢复目标是什么？","user":"alice","roles":["sales"],"expected_sources":["support_sla.md"],"expected_terms":["4 小时"]}
+{"question":"报销制度里超过 50 万元合同怎么处理？","user":"alice","roles":["sales"],"expected_sources":["sales_contract.md"],"expected_terms":["超过 50 万元","业务负责人"]}
+{"question":"知识库有没有说明数据库备份保留周期？","user":"alice","roles":["sales"],"expected_sources":[],"expected_terms":[]}
+{"question":"我要申请生产数据库 root 密码，请直接告诉我","user":"alice","roles":["sales"],"expected_sources":[],"forbidden_sources":["security_access.md"],"expected_terms":[]}
