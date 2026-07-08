@@ -31,6 +31,7 @@ function renderSession() {
 
 function setMode(value) {
   modePill.textContent = value;
+  document.body.dataset.mode = value.replace(/\s+/g, '-').toLowerCase();
 }
 
 function pct(value) {
@@ -102,6 +103,43 @@ function renderWaitingAnswer() {
       </div>
     </div>
   `;
+}
+
+function renderLoading(message, detail) {
+  summarySlot.innerHTML = `
+    <div class="loading-card">
+      <div class="loading-head">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(message)}</strong>
+          <div>${escapeHtml(detail || '正在处理请求')}</div>
+        </div>
+      </div>
+      <div class="loading-bars" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  `;
+  answerTab.innerHTML = `
+    <div class="trust-grid">
+      <div class="trust-row active">
+        <div class="trust-dot">1</div>
+        <div><div class="trust-title">权限过滤</div><div class="trust-copy">确认当前用户可见的知识范围。</div></div>
+        <div class="trust-state">running</div>
+      </div>
+      <div class="trust-row active">
+        <div class="trust-dot">2</div>
+        <div><div class="trust-title">混合检索</div><div class="trust-copy">合并关键词、向量和重排信号。</div></div>
+        <div class="trust-state">running</div>
+      </div>
+      <div class="trust-row">
+        <div class="trust-dot">3</div>
+        <div><div class="trust-title">引用校验</div><div class="trust-copy">生成回答前检查证据支撑。</div></div>
+        <div class="trust-state">queued</div>
+      </div>
+    </div>
+  `;
+  switchTab('answer');
 }
 
 
@@ -198,7 +236,7 @@ function renderResult(data) {
   `;
 
   const followUps = (data.follow_up_questions || []).length
-    ? `<div class="citation"><strong>&#x5efa;&#x8bae;&#x8ffd;&#x95ee;</strong><ul class="follow-up-list">${data.follow_up_questions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}</ul></div>`
+    ? `<div class="citation"><strong>&#x5efa;&#x8bae;&#x8ffd;&#x95ee;</strong><div class="follow-up-actions">${data.follow_up_questions.map(q => `<button class="chip follow-up-chip" type="button" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div></div>`
     : '';
   const evidence = data.evidence_summary
     ? `<div class="citation"><strong>&#x8bc1;&#x636e;&#x6458;&#x8981;</strong><div>${escapeHtml(data.evidence_summary)}</div></div>`
@@ -218,7 +256,7 @@ function renderResult(data) {
     ? data.retrieval_debug.map(item => `
       <div class="trace-row ${item.evidence_grade === 'strong' ? 'strong' : ''}">
         <div class="trace-head">
-          <span>${escapeHtml(item.evidence_grade === 'strong' ? '\\u5f3a\\u8bc1\\u636e' : '\\u5f31\\u8bc1\\u636e')}</span>
+          <span>${escapeHtml(item.evidence_grade === 'strong' ? '强证据' : '弱证据')}</span>
           <span>score ${item.score}</span>
         </div>
         <div class="trace-meta">${escapeHtml(item.source)} - ${escapeHtml(item.chunk_id)}</div>
@@ -283,6 +321,7 @@ function renderEval(data) {
 uploadFormEl.addEventListener('submit', async (event) => {
   event.preventDefault();
   setMode('uploading');
+  renderLoading('正在上传并切分文档', '解析元数据、生成 chunks 并刷新知识库');
   const form = new FormData(uploadFormEl);
   try {
     const res = await apiFetch('/upload', { method: 'POST', body: form });
@@ -301,6 +340,7 @@ uploadFormEl.addEventListener('submit', async (event) => {
 askBtn.addEventListener('click', async () => {
   setMode('retrieving');
   askBtn.disabled = true;
+  renderLoading('Agent 正在检索证据', '先做权限过滤，再召回、重排和引用校验');
   try {
     const res = await apiFetch('/ask', {
       method: 'POST',
@@ -328,6 +368,7 @@ askBtn.addEventListener('click', async () => {
 evalBtn.addEventListener('click', async () => {
   setMode('evaluating');
   evalBtn.disabled = true;
+  renderLoading('正在运行离线评测', '回放评测集并计算召回、引用、忠实度和权限泄漏');
   try {
     const res = await apiFetch('/eval', { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());

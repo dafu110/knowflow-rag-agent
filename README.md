@@ -5,7 +5,11 @@
 
 企业知识库 RAG Agent，支持文档上传、结构化切分、BM25/TF-IDF/外部 embedding 混合检索、外部 reranker、可选 LLM 证据合成、来源引用、答案评估、多轮追问、权限过滤、幻觉检测、SQLite/JSONL 存储和离线评测集。
 
+## 界面预览
+
 ![KnowFlow RAG Agent dashboard](assets/knowflow-dashboard.png)
+
+![KnowFlow RAG Agent mobile check](assets/knowflow-mobile-check.png)
 
 ## 快速开始
 
