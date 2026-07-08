@@ -28,13 +28,10 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Compile
-        run: python -m compileall -q knowflow tests
+        run: python -m compileall -q knowflow tests scripts
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v
 
-      - name: Offline RAG evaluation
-        run: |
-          STORE_DIR="$(mktemp -d)"
-          python -m knowflow.cli --store "$STORE_DIR" ingest sample_docs --reset
-          python -m knowflow.cli --store "$STORE_DIR" eval evals/rag_eval_set.jsonl
+      - name: Offline RAG evaluation gate
+        run: python scripts/check_eval.py

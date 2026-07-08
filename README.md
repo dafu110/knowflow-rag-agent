@@ -32,6 +32,12 @@ docker compose up --build
 
 启动后访问 `http://127.0.0.1:8765`。正式部署前建议复制 `.env.example` 为 `.env` 并替换真实 token、模型密钥和网关地址；`.env` 已被忽略，不会进入 Git。
 
+## 架构与评测
+
+- 架构说明：[docs/architecture.md](docs/architecture.md)
+- 离线评测集：`evals/rag_eval_set.jsonl`，覆盖检索召回、引用准确率、忠实度、权限泄漏和拒答场景。
+- CI 质量门禁：`scripts/check_eval.py` 会在临时知识库中导入 `sample_docs/`，并要求 recall@k >= 0.95、MRR >= 0.90、引用准确率 >= 0.95、忠实度 >= 0.95、权限泄漏为 0。
+
 ## 能力清单
 
 - 文档上传：Web 表单和 CLI 目录导入，支持 `.txt`、`.md`、`.csv`、`.json`。
