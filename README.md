@@ -1,10 +1,17 @@
 # KnowFlow RAG Agent
 
+[![CI](https://github.com/dafu110/knowflow-rag-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/dafu110/knowflow-rag-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 企业知识库 RAG Agent，支持文档上传、结构化切分、BM25/TF-IDF/外部 embedding 混合检索、外部 reranker、可选 LLM 证据合成、来源引用、答案评估、多轮追问、权限过滤、幻觉检测、SQLite/JSONL 存储和离线评测集。
 
 ![KnowFlow RAG Agent dashboard](assets/knowflow-dashboard.png)
 
 ## 快速开始
+
+```powershell
+python -m pip install -e ".[dev]"
+```
 
 ```powershell
 python -m knowflow.cli ingest sample_docs --reset
@@ -14,6 +21,16 @@ python -m knowflow.cli serve --port 8765
 ```
 
 打开 `http://127.0.0.1:8765` 可使用上传和问答界面。
+
+## Docker 运行
+
+仓库包含 `.env.example`、`Dockerfile` 和 `docker-compose.yml`，可直接启动 SQLite 持久化的 Web 服务：
+
+```powershell
+docker compose up --build
+```
+
+启动后访问 `http://127.0.0.1:8765`。正式部署前建议复制 `.env.example` 为 `.env` 并替换真实 token、模型密钥和网关地址；`.env` 已被忽略，不会进入 Git。
 
 ## 能力清单
 

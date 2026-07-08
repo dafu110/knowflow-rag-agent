@@ -10,6 +10,7 @@ htmlcov/
 .venv/
 venv/
 env/
+.env
 
 data/knowledge_store/
 output/

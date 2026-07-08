@@ -1,0 +1,13 @@
+services:
+  knowflow:
+    build: .
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env.example
+    volumes:
+      - knowflow-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  knowflow-data:
