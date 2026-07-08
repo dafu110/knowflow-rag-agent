@@ -9,7 +9,7 @@
 
 ![KnowFlow RAG Agent dashboard](assets/knowflow-dashboard.png)
 
-![KnowFlow RAG Agent mobile check](assets/knowflow-mobile-check.png)
+
 
 ## 快速开始
 
