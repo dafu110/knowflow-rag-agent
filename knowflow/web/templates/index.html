@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
+  <a class="skip-link" href="#question">&#x8df3;&#x5230;&#x63d0;&#x95ee;&#x8f93;&#x5165;</a>
   <main>
     <header class="topbar">
       <div class="brand-block">
@@ -23,6 +24,7 @@
         <span class="pill" id="sessionPill">session ...</span>
       </div>
     </header>
+    <div class="sr-only" id="statusLive" role="status" aria-live="polite">ready</div>
 
     <div class="dashboard">
       <aside class="column left-column">
@@ -42,12 +44,12 @@
             <summary>&#x4e0a;&#x4f20;&#x6587;&#x6863;</summary>
             <div class="foldout-body">
               <form id="uploadForm">
-                <label>&#x9009;&#x62e9;&#x6587;&#x6863;</label>
-                <input type="file" name="file" accept=".txt,.md,.csv,.json" required />
-                <label>&#x53ef;&#x89c1;&#x89d2;&#x8272;</label>
-                <input name="roles" placeholder="sales,legal" />
-                <label>&#x53ef;&#x89c1;&#x7528;&#x6237;</label>
-                <input name="users" placeholder="alice,bob" />
+                <label for="uploadFile">&#x9009;&#x62e9;&#x6587;&#x6863;</label>
+                <input id="uploadFile" type="file" name="file" accept=".txt,.md,.csv,.json" required />
+                <label for="uploadRoles">&#x53ef;&#x89c1;&#x89d2;&#x8272;</label>
+                <input id="uploadRoles" name="roles" placeholder="sales,legal" autocomplete="off" />
+                <label for="uploadUsers">&#x53ef;&#x89c1;&#x7528;&#x6237;</label>
+                <input id="uploadUsers" name="users" placeholder="alice,bob" autocomplete="off" />
                 <button class="secondary" type="submit">&#x4e0a;&#x4f20;&#x5e76;&#x5207;&#x5206;</button>
               </form>
             </div>
@@ -98,13 +100,15 @@
               <div class="identity-copy">&#x7528;&#x4e8e;&#x6743;&#x9650;&#x8fc7;&#x6ee4;&#xff0c;&#x5f71;&#x54cd;&#x53ef;&#x68c0;&#x7d22;&#x7684;&#x6587;&#x6863;&#x3002;</div>
             </div>
             <div class="identity-fields">
-              <label><span>&#x7528;&#x6237;</span><input id="user" value="alice" aria-label="user" /></label>
-              <label><span>&#x89d2;&#x8272;</span><input id="roles" value="sales" aria-label="roles" /></label>
+              <label for="user"><span>&#x7528;&#x6237;</span><input id="user" value="alice" autocomplete="username" /></label>
+              <label for="roles"><span>&#x89d2;&#x8272;</span><input id="roles" value="sales" autocomplete="off" /></label>
             </div>
           </div>
           <div class="composer">
             <div>
-              <textarea id="question">&#x9500;&#x552e;&#x5408;&#x540c;&#x5ba1;&#x6279;&#x9700;&#x8981;&#x54ea;&#x4e9b;&#x6750;&#x6599;&#xff1f;</textarea>
+              <label class="sr-only" for="question">&#x4e1a;&#x52a1;&#x95ee;&#x9898;</label>
+              <textarea id="question" aria-describedby="questionHelp">&#x9500;&#x552e;&#x5408;&#x540c;&#x5ba1;&#x6279;&#x9700;&#x8981;&#x54ea;&#x4e9b;&#x6750;&#x6599;&#xff1f;</textarea>
+              <div class="hint" id="questionHelp">Ctrl+Enter &#x53ef;&#x5feb;&#x901f;&#x63d0;&#x95ee;&#x3002;</div>
               <div class="quick-grid">
                 <button class="chip" type="button" data-q="&#x9500;&#x552e;&#x5408;&#x540c;&#x5ba1;&#x6279;&#x9700;&#x8981;&#x54ea;&#x4e9b;&#x6750;&#x6599;&#xff1f;">&#x9500;&#x552e;&#x5408;&#x540c;</button>
                 <button class="chip" type="button" data-q="&#x8d85;&#x8fc7; 10000 &#x5143;&#x7684;&#x8d39;&#x7528;&#x62a5;&#x9500;&#x7531;&#x8c01;&#x5ba1;&#x6279;&#xff1f;">&#x62a5;&#x9500;&#x5ba1;&#x6279;</button>
@@ -114,7 +118,7 @@
             </div>
             <div class="composer-actions">
               <button class="primary" id="askBtn" type="button">&#x63d0;&#x95ee;</button>
-              <button class="secondary" id="copyBtn" type="button">&#x590d;&#x5236;&#x7ed3;&#x679c;</button>
+              <button class="secondary" id="copyBtn" type="button" disabled>&#x590d;&#x5236;&#x7ed3;&#x679c;</button>
             </div>
           </div>
         </section>
@@ -142,12 +146,12 @@
             </div>
           </div>
 
-          <div class="tabs" role="tablist">
-            <button class="tab active" type="button" data-tab="answer">&#x56de;&#x7b54;</button>
-            <button class="tab" type="button" data-tab="citations">&#x5f15;&#x7528;</button>
-            <button class="tab" type="button" data-tab="trace">Trace</button>
+          <div class="tabs" role="tablist" aria-label="Answer details">
+            <button class="tab active" id="tabButton-answer" type="button" data-tab="answer" role="tab" aria-selected="true" aria-controls="tab-answer">&#x56de;&#x7b54;</button>
+            <button class="tab" id="tabButton-citations" type="button" data-tab="citations" role="tab" aria-selected="false" aria-controls="tab-citations" tabindex="-1">&#x5f15;&#x7528;</button>
+            <button class="tab" id="tabButton-trace" type="button" data-tab="trace" role="tab" aria-selected="false" aria-controls="tab-trace" tabindex="-1">Trace</button>
           </div>
-          <div class="tab-panel active" id="tab-answer">
+          <div class="tab-panel active" id="tab-answer" role="tabpanel" aria-labelledby="tabButton-answer">
             <div class="trust-grid">
               <div class="trust-row">
                 <div class="trust-dot">1</div>
@@ -166,10 +170,10 @@
               </div>
             </div>
           </div>
-          <div class="tab-panel" id="tab-citations">
+          <div class="tab-panel" id="tab-citations" role="tabpanel" aria-labelledby="tabButton-citations" hidden>
             <div class="empty">&#x6682;&#x65e0;&#x5f15;&#x7528;&#x3002;</div>
           </div>
-          <div class="tab-panel" id="tab-trace">
+          <div class="tab-panel" id="tab-trace" role="tabpanel" aria-labelledby="tabButton-trace" hidden>
             <div class="status-list" id="guardrailPanel">
               <div class="status-card">
                 <div class="step-dot">1</div>

@@ -35,3 +35,6 @@ jobs:
 
       - name: Offline RAG evaluation gate
         run: python scripts/check_eval.py
+
+      - name: Role-based demo smoke flow
+        run: python scripts/demo_flow.py

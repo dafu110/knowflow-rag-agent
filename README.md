@@ -170,3 +170,9 @@ knowflow/
 ## 设计边界
 
 当前版本默认专注展示可离线运行的 RAG 工程能力，生成答案采用“证据抽取 + 合成”的可解释策略。生产模式已支持外部 embedding、LLM、reranker、SQLite、token 身份映射和 WSGI 部署；上线时仍建议接入企业级密钥管理、审计日志、监控告警和反向代理 TLS。
+
+## Launch Readiness
+
+- [Launch hardening checklist](docs/launch-hardening.md)
+- [ADR: Pre-ranking permission filtering](docs/adr/0001-pre-ranking-permission-filtering.md)
+- Demo smoke flow: `python scripts\demo_flow.py`

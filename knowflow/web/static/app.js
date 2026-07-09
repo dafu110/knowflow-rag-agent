@@ -20,6 +20,7 @@ const metricChunks = document.getElementById('metricChunks');
 const questionInput = document.getElementById('question');
 const userInput = document.getElementById('user');
 const rolesInput = document.getElementById('roles');
+const statusLive = document.getElementById('statusLive');
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
@@ -32,6 +33,8 @@ function renderSession() {
 function setMode(value) {
   modePill.textContent = value;
   document.body.dataset.mode = value.replace(/\s+/g, '-').toLowerCase();
+  statusLive.textContent = value;
+  document.querySelector('.dashboard').setAttribute('aria-busy', String(['retrieving', 'uploading', 'evaluating'].includes(value)));
 }
 
 function pct(value) {
@@ -62,6 +65,7 @@ function riskLabel(value) {
 }
 
 function renderError(title, message) {
+  copyBtn.disabled = true;
   summarySlot.innerHTML = `<div class="meta"><span class="pill" data-level="high">${escapeHtml(title)}</span></div>`;
   answerTab.innerHTML = `<div class="citation"><strong>${escapeHtml(title)}</strong><div>${escapeHtml(message)}</div></div>`;
   citationsTab.innerHTML = '<div class="empty">&#x672c;&#x6b21;&#x64cd;&#x4f5c;&#x672a;&#x4ea7;&#x751f;&#x5f15;&#x7528;&#x3002;</div>';
@@ -81,6 +85,31 @@ async function apiFetch(url, options = {}, retry = true) {
     }
   }
   return response;
+}
+
+async function parseApiResponse(response) {
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { error: { message: text } };
+    }
+  }
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || response.statusText || 'request failed';
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function setBusy(isBusy) {
+  askBtn.disabled = isBusy;
+  evalBtn.disabled = isBusy;
+  uploadFormEl.querySelectorAll('input, button').forEach(element => {
+    element.disabled = isBusy;
+  });
 }
 
 function renderWaitingAnswer() {
@@ -145,7 +174,7 @@ function renderLoading(message, detail) {
 
 async function refreshStats() {
   const res = await apiFetch('/health');
-  const data = await res.json();
+  const data = await parseApiResponse(res);
   statsPill.textContent = `${data.stats.documents} docs / ${data.stats.chunks} chunks`;
   metricDocs.textContent = data.stats.documents;
   metricChunks.textContent = data.stats.chunks;
@@ -153,7 +182,7 @@ async function refreshStats() {
 
 async function refreshDocuments() {
   const res = await apiFetch('/documents');
-  const data = await res.json();
+  const data = await parseApiResponse(res);
   if (!data.documents.length) {
     docList.innerHTML = '<div class="empty">&#x6682;&#x65e0;&#x6587;&#x6863;&#x3002;</div>';
     return;
@@ -180,12 +209,21 @@ async function refreshDocuments() {
 }
 
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.tab === name));
-  document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
-  document.getElementById(`tab-${name}`).classList.add('active');
+  document.querySelectorAll('.tab').forEach(tab => {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    const active = panel.id === `tab-${name}`;
+    panel.classList.toggle('active', active);
+    panel.hidden = !active;
+  });
 }
 
 function renderUploadSuccess(data) {
+  copyBtn.disabled = true;
   summarySlot.innerHTML = `
     <div class="meta">
       <span class="pill" data-level="low">&#x4e0a;&#x4f20;&#x6210;&#x529f;</span>
@@ -205,6 +243,7 @@ function renderUploadSuccess(data) {
 }
 
 function renderResult(data) {
+  copyBtn.disabled = false;
   const strongCount = (data.retrieval_debug || []).filter(item => item.evidence_grade === 'strong').length;
   const citationCount = (data.citations || []).length;
   const retrievalCount = (data.retrieval_debug || []).length;
@@ -275,6 +314,7 @@ function renderResult(data) {
 }
 
 function renderEval(data) {
+  copyBtn.disabled = true;
   const leakLevel = data.permission_leaks > 0 ? 'high' : 'low';
   summarySlot.innerHTML = `
     <div class="meta">
@@ -320,13 +360,13 @@ function renderEval(data) {
 
 uploadFormEl.addEventListener('submit', async (event) => {
   event.preventDefault();
-  setMode('uploading');
-  renderLoading('正在上传并切分文档', '解析元数据、生成 chunks 并刷新知识库');
   const form = new FormData(uploadFormEl);
+  setMode('uploading');
+  setBusy(true);
+  renderLoading('正在上传并切分文档', '解析元数据、生成 chunks 并刷新知识库');
   try {
     const res = await apiFetch('/upload', { method: 'POST', body: form });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     renderUploadSuccess(data);
     setMode('ready');
     await refreshStats();
@@ -334,12 +374,19 @@ uploadFormEl.addEventListener('submit', async (event) => {
   } catch (error) {
     renderError('upload failed', error.message || String(error));
     setMode('error');
+  } finally {
+    setBusy(false);
   }
 });
 
 askBtn.addEventListener('click', async () => {
+  if (!questionInput.value.trim()) {
+    renderError('ask failed', '问题不能为空。');
+    setMode('error');
+    return;
+  }
   setMode('retrieving');
-  askBtn.disabled = true;
+  setBusy(true);
   renderLoading('Agent 正在检索证据', '先做权限过滤，再召回、重排和引用校验');
   try {
     const res = await apiFetch('/ask', {
@@ -352,8 +399,7 @@ askBtn.addEventListener('click', async () => {
         session_id: sessionId
       })
     });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     lastAnswer = data;
     renderResult(data);
     setMode(data.answer_type || 'ready');
@@ -361,25 +407,24 @@ askBtn.addEventListener('click', async () => {
     renderError('ask failed', error.message || String(error));
     setMode('error');
   } finally {
-    askBtn.disabled = false;
+    setBusy(false);
   }
 });
 
 evalBtn.addEventListener('click', async () => {
   setMode('evaluating');
-  evalBtn.disabled = true;
+  setBusy(true);
   renderLoading('正在运行离线评测', '回放评测集并计算召回、引用、忠实度和权限泄漏');
   try {
     const res = await apiFetch('/eval', { method: 'POST' });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    const data = await parseApiResponse(res);
     renderEval(data);
     setMode('eval ready');
   } catch (error) {
     renderError('eval failed', error.message || String(error));
     setMode('error');
   } finally {
-    evalBtn.disabled = false;
+    setBusy(false);
   }
 });
 
@@ -393,6 +438,7 @@ copyBtn.addEventListener('click', async () => {
 newSessionBtn.addEventListener('click', () => {
   sessionId = Math.random().toString(36).slice(2);
   lastAnswer = null;
+  copyBtn.disabled = true;
   renderSession();
   summarySlot.innerHTML = '<div class="empty">&#x65b0;&#x4f1a;&#x8bdd;&#x5df2;&#x5c31;&#x7eea;&#xff0c;&#x53ef;&#x4ee5;&#x5f00;&#x59cb;&#x65b0;&#x7684;&#x8ffd;&#x95ee;&#x94fe;&#x3002;</div>';
   renderWaitingAnswer();
@@ -424,13 +470,27 @@ document.addEventListener('click', async (event) => {
     const documentId = deleteButton.getAttribute('data-delete-doc');
     if (!confirm('\\u5220\\u9664\\u8fd9\\u4efd\\u6587\\u6863\\u53ca\\u5176\\u6240\\u6709 chunks\\uff1f')) return;
     deleteButton.disabled = true;
-    await apiFetch(`/documents?id=${encodeURIComponent(documentId)}`, { method: 'DELETE' });
-    await refreshStats();
-    await refreshDocuments();
+    try {
+      const response = await apiFetch(`/documents?id=${encodeURIComponent(documentId)}`, { method: 'DELETE' });
+      await parseApiResponse(response);
+      await refreshStats();
+      await refreshDocuments();
+      setMode('ready');
+    } catch (error) {
+      renderError('delete failed', error.message || String(error));
+      setMode('error');
+    }
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !askBtn.disabled) {
+    askBtn.click();
   }
 });
 
 refreshDocsBtn.addEventListener('click', refreshDocuments);
 renderSession();
-refreshStats();
-refreshDocuments();
+setMode('ready');
+refreshStats().catch(error => renderError('health failed', error.message || String(error)));
+refreshDocuments().catch(error => renderError('documents failed', error.message || String(error)));
