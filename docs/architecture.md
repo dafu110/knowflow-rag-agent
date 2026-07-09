@@ -28,6 +28,7 @@ flowchart LR
 - `knowflow/agent.py`: manages conversation context, evidence selection, answer composition, citation generation, refusal behavior, and hallucination risk.
 - `knowflow/providers.py`: contains OpenAI-compatible embedding/chat adapters and a generic HTTP reranker adapter.
 - `knowflow/server.py`: exposes upload, ask, eval, health, and document APIs with token auth, size limits, path restrictions, rate limiting, and security headers.
+- `knowflow/audit.py`: writes optional JSONL audit events for ask/upload/eval/delete/error flows when `KNOWFLOW_AUDIT_LOG` is configured.
 - `knowflow/evaluation.py`: runs the offline RAG eval set and reports recall@k, MRR, citation accuracy, faithfulness, and permission leaks.
 
 ## Retrieval And Grounding
@@ -48,6 +49,7 @@ flowchart LR
 - Static file serving is locked to known CSS/JS assets.
 - Responses include CSP, `X-Frame-Options`, `X-Content-Type-Options`, and referrer policy headers.
 - Sensitive intents such as customer data, temporary authorization, keys, passwords, and backups must retrieve matching security evidence before the agent answers.
+- Audit logging records request/action summaries and request IDs without storing tokens, full answers, or uploaded document content.
 
 ## Evaluation Gate
 

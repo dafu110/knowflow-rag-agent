@@ -6,6 +6,7 @@
 - Keep eval paths restricted to the `evals/` directory.
 - Keep upload extension, filename, and size restrictions enabled.
 - Verify permission leaks remain zero in offline evals.
+- Enable `KNOWFLOW_AUDIT_LOG` for shared environments and forward it to your log pipeline.
 - Use WSGI/Gunicorn and a reverse proxy with TLS for non-local deployment.
 
 ## Recommended Pre-Launch Commands

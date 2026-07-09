@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from knowflow.agent import RagAgent
+from knowflow.audit import AuditLogger
 from knowflow.chunking import load_documents_from_path
 from knowflow.evaluation import evaluate
 from knowflow.models import Principal
@@ -195,6 +196,44 @@ class RagAgentTest(unittest.TestCase):
         connection.close()
         self.assertEqual(response.status, 200)
         self.assertTrue(payload["citations"])
+
+    def test_ask_writes_audit_summary(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = KnowledgeStore(Path(tmp.name) / "store")
+        store.add_documents(load_documents_from_path(Path("sample_docs")))
+        audit_path = Path(tmp.name) / "audit" / "events.jsonl"
+        handler = create_handler(
+            store,
+            rate_limiter=RateLimiter(max_requests=100, window_seconds=1),
+            audit_logger=AuditLogger(audit_path),
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        body = json.dumps({"question": "销售合同审批需要哪些材料？", "user": "alice", "roles": ["sales"]}).encode("utf-8")
+        connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        connection.request(
+            "POST",
+            "/ask",
+            body=body,
+            headers={"content-type": "application/json", "x-request-id": "test-request"},
+        )
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("x-request-id"), "test-request")
+        rows = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(rows[-1]["action"], "ask")
+        self.assertEqual(rows[-1]["request_id"], "test-request")
+        self.assertEqual(rows[-1]["principal"]["user"], "alice")
+        self.assertEqual(rows[-1]["citations"], 2)
+        self.assertNotIn("answer", rows[-1])
 
 
 if __name__ == "__main__":

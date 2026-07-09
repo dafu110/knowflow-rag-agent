@@ -175,4 +175,6 @@ knowflow/
 
 - [Launch hardening checklist](docs/launch-hardening.md)
 - [ADR: Pre-ranking permission filtering](docs/adr/0001-pre-ranking-permission-filtering.md)
+- [API reference](docs/api.md)
+- [Deployment and operations](docs/deployment.md)
 - Demo smoke flow: `python scripts\demo_flow.py`

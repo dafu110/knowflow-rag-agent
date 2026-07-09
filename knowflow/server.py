@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import uuid
 from dataclasses import asdict
 from email import policy
 from email.parser import BytesParser
@@ -12,6 +13,7 @@ from time import monotonic
 from urllib.parse import parse_qs, urlparse
 
 from .agent import RagAgent
+from .audit import AuditLogger, audit_logger_from_env
 from .chunking import SUPPORTED_EXTENSIONS, parse_document
 from .evaluation import evaluate
 from .models import Document, Principal
@@ -75,11 +77,13 @@ def create_handler(
     api_token: str | None = None,
     auth_tokens: str | None = None,
     rate_limiter: RateLimiter | None = None,
+    audit_logger: AuditLogger | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     agent = agent or RagAgent(store)
     api_token = api_token if api_token is not None else os.environ.get("KNOWFLOW_API_TOKEN", "")
     authenticator = TokenAuthenticator(auth_tokens if auth_tokens is not None else os.environ.get("KNOWFLOW_AUTH_TOKENS", ""))
     rate_limiter = rate_limiter or RateLimiter()
+    audit_logger = audit_logger if audit_logger is not None else audit_logger_from_env()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -92,16 +96,28 @@ def create_handler(
             self._dispatch(self._handle_delete)
 
         def _dispatch(self, handler: object) -> None:
+            self.request_id = self.headers.get("x-request-id") or uuid.uuid4().hex
             try:
                 client = self.client_address[0] if self.client_address else "unknown"
                 if not rate_limiter.allow(client):
                     raise HttpError(429, "rate limit exceeded")
                 handler()
             except HttpError as error:
+                self._audit(
+                    "request_error",
+                    {
+                        "method": self.command,
+                        "path": urlparse(self.path).path,
+                        "status": error.status,
+                        "error": error.message,
+                    },
+                )
                 self._send_error(error.status, error.message)
             except (json.JSONDecodeError, UnicodeDecodeError):
+                self._audit("request_error", {"method": self.command, "path": urlparse(self.path).path, "status": 400, "error": "invalid json"})
                 self._send_error(400, "invalid json")
             except ValueError as error:
+                self._audit("request_error", {"method": self.command, "path": urlparse(self.path).path, "status": 400, "error": str(error)})
                 self._send_error(400, str(error))
 
         def _handle_get(self) -> None:
@@ -131,19 +147,42 @@ def create_handler(
                     session_id=payload.get("session_id"),
                     top_k=_clamp_int(payload.get("top_k", 6), minimum=1, maximum=20),
                 )
+                self._audit(
+                    "ask",
+                    {
+                        "principal": _principal_summary(principal),
+                        "question_chars": len(question),
+                        "answer_type": answer.answer_type,
+                        "citations": len(answer.citations),
+                        "hallucination_risk": answer.hallucination_risk,
+                        "status": 200,
+                    },
+                )
                 self._send_json(asdict(answer))
             elif parsed.path == "/upload":
-                self._principal_from_request({})
-                self._handle_upload()
+                principal = self._principal_from_request({})
+                self._handle_upload(principal)
             elif parsed.path == "/eval":
-                self._principal_from_request({})
+                principal = self._principal_from_request({})
                 eval_path = _safe_eval_path(parse_qs(parsed.query).get("path", ["rag_eval_set.jsonl"])[0])
-                self._send_json(asdict(evaluate(agent, eval_path)))
+                result = evaluate(agent, eval_path)
+                self._audit(
+                    "eval",
+                    {
+                        "principal": _principal_summary(principal),
+                        "eval_path": eval_path.name,
+                        "total": result.total,
+                        "recall_at_k": result.recall_at_k,
+                        "permission_leaks": result.permission_leaks,
+                        "status": 200,
+                    },
+                )
+                self._send_json(asdict(result))
             else:
                 raise HttpError(404, "not found")
 
         def _handle_delete(self) -> None:
-            self._principal_from_request({})
+            principal = self._principal_from_request({})
             parsed = urlparse(self.path)
             if parsed.path != "/documents":
                 raise HttpError(404, "not found")
@@ -151,6 +190,15 @@ def create_handler(
             if not document_id:
                 raise HttpError(400, "missing document id")
             deleted = store.delete_document(document_id)
+            self._audit(
+                "delete_document",
+                {
+                    "principal": _principal_summary(principal),
+                    "document_id": document_id,
+                    "deleted": deleted,
+                    "status": 200,
+                },
+            )
             self._send_json({"deleted": deleted, "stats": store.stats(), "documents": _document_rows(store)})
 
         def _handle_static(self, path: str) -> None:
@@ -162,7 +210,7 @@ def create_handler(
                 raise HttpError(404, "not found")
             self._send_file(file_path, MIME_TYPES[file_path.suffix])
 
-        def _handle_upload(self) -> None:
+        def _handle_upload(self, principal: Principal) -> None:
             form = self._read_multipart()
             file_item = form.get("file")
             if not file_item or not file_item.get("filename"):
@@ -183,6 +231,18 @@ def create_handler(
                 content = "---\n" + "\n".join(metadata) + "\n---\n" + content
             document = parse_document(Path(filename), text=content)
             added = store.add_documents([document])
+            self._audit(
+                "upload",
+                {
+                    "principal": _principal_summary(principal),
+                    "filename": filename,
+                    "document_id": document.id,
+                    "chunks_added": added,
+                    "allowed_roles_count": len(document.allowed_roles),
+                    "allowed_users_count": len(document.allowed_users),
+                    "status": 200,
+                },
+            )
             self._send_json(
                 {"added": added, "document_id": document.id, "stats": store.stats(), "documents": _document_rows(store)}
             )
@@ -255,11 +315,23 @@ def create_handler(
             self.send_header("referrer-policy", "same-origin")
             self.send_header("x-frame-options", "DENY")
             self.send_header("content-security-policy", CSP)
+            self.send_header("x-request-id", getattr(self, "request_id", ""))
             self.end_headers()
             self.wfile.write(data)
 
         def log_message(self, format: str, *args: object) -> None:
             return
+
+        def _audit(self, action: str, fields: dict[str, object]) -> None:
+            client = self.client_address[0] if self.client_address else "unknown"
+            audit_logger.log(
+                {
+                    "request_id": getattr(self, "request_id", ""),
+                    "action": action,
+                    "client": client,
+                    **fields,
+                }
+            )
 
     return Handler
 
@@ -357,3 +429,7 @@ def _document_row(document: Document, chunk_count: int) -> dict[str, object]:
         "chunk_count": chunk_count,
         "created_at": document.created_at,
     }
+
+
+def _principal_summary(principal: Principal) -> dict[str, object]:
+    return {"user": principal.user, "roles": sorted(principal.roles)}
