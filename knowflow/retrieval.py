@@ -76,6 +76,8 @@ class HybridRetriever:
             term: math.log((len(self.chunks) - df + 0.5) / (df + 0.5) + 1)
             for term, df in self.doc_freqs.items()
         }
+        self._chunk_embeddings: list[list[float]] | None = None
+        self._embedding_unavailable = False
 
     def search(self, query: str, principal: Principal, top_k: int = 6) -> list[RetrievedChunk]:
         if not query.strip() or not self.chunks:
@@ -147,22 +149,37 @@ class HybridRetriever:
     def _semantic_scores(self, query: str, visible_indices: list[int]) -> dict[int, float]:
         if not self.embedding_provider or not visible_indices:
             return {}
-        texts = [query] + [_chunk_text(self.chunks[index]) for index in visible_indices]
+        self.warm_embeddings()
+        if not self._chunk_embeddings:
+            return {}
         try:
-            vectors = self.embedding_provider.embed(texts)
+            vectors = self.embedding_provider.embed([query])
         except RuntimeError:
             return {}
-        if len(vectors) != len(texts):
+        if len(vectors) != 1:
             return {}
         query_vector = vectors[0]
         scores = {
-            index: _cosine_dense(query_vector, vectors[position + 1])
-            for position, index in enumerate(visible_indices)
+            index: _cosine_dense(query_vector, self._chunk_embeddings[index])
+            for index in visible_indices
         }
         max_score = max(scores.values()) if scores else 0.0
         if max_score <= 0:
             return scores
         return {index: score / max_score for index, score in scores.items()}
+
+    def warm_embeddings(self) -> None:
+        if not self.embedding_provider or self._chunk_embeddings is not None or self._embedding_unavailable:
+            return
+        try:
+            vectors = self.embedding_provider.embed([_chunk_text(chunk) for chunk in self.chunks])
+        except RuntimeError:
+            self._embedding_unavailable = True
+            return
+        if len(vectors) != len(self.chunks):
+            self._embedding_unavailable = True
+            return
+        self._chunk_embeddings = vectors
 
     def _apply_external_rerank(self, query: str, results: list[RetrievedChunk]) -> None:
         if not self.reranker or not results:

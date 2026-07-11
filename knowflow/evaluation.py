@@ -18,6 +18,7 @@ class EvalResult:
     citation_accuracy: float
     faithfulness: float
     permission_leaks: int
+    scenario_summary: dict[str, dict[str, int]]
     cases: list[dict[str, Any]]
 
 
@@ -41,7 +42,11 @@ def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
     citation_cases = 0
     faithfulness_scores = 0.0
     permission_leaks = 0
+    scenario_summary: dict[str, dict[str, int]] = {}
     for case in cases:
+        scenario = str(case.get("scenario", "core"))
+        scenario_row = scenario_summary.setdefault(scenario, {"total": 0, "passed": 0, "permission_leaks": 0})
+        scenario_row["total"] += 1
         principal = Principal(user=case.get("user", "eval"), roles=set(case.get("roles", [])))
         answer = agent.ask(case["question"], principal=principal, session_id=f"eval-{len(details)}", top_k=top_k)
         expected_sources = set(case.get("expected_sources", []))
@@ -66,11 +71,18 @@ def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
         forbidden = set(case.get("forbidden_sources", []))
         if forbidden.intersection(retrieved_sources) or forbidden.intersection(cited_sources):
             permission_leaks += 1
+            scenario_row["permission_leaks"] += 1
         expected_terms = set(tokenize(" ".join(case.get("expected_terms", []))))
         answer_terms = set(tokenize(answer.answer))
         term_coverage = len(expected_terms.intersection(answer_terms)) / max(len(expected_terms), 1)
+        passed = bool(faithfulness) and not bool(forbidden.intersection(retrieved_sources) or forbidden.intersection(cited_sources))
+        if expected_sources:
+            passed = passed and first_rank is not None and bool(expected_sources.intersection(cited_sources))
+        if passed:
+            scenario_row["passed"] += 1
         details.append(
             {
+                "scenario": scenario,
                 "question": case["question"],
                 "answer": answer.answer,
                 "confidence": answer.confidence,
@@ -95,6 +107,7 @@ def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
         citation_accuracy=round(citation_hits / citation_total, 3),
         faithfulness=round(faithfulness_scores / total, 3),
         permission_leaks=permission_leaks,
+        scenario_summary=scenario_summary,
         cases=details,
     )
 

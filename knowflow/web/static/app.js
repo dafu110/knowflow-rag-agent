@@ -280,7 +280,14 @@ function renderResult(data) {
   const evidence = data.evidence_summary
     ? `<div class="citation"><strong>&#x8bc1;&#x636e;&#x6458;&#x8981;</strong><div>${escapeHtml(data.evidence_summary)}</div></div>`
     : '';
-  answerTab.innerHTML = `<div class="answer">${escapeHtml(data.answer)}</div>${evidence}${followUps}`;
+  const refusal = data.answer_type === 'refusal'
+    ? `<div class="guardrail-notice"><strong>权限或证据边界已生效</strong><div>当前身份下没有可引用的可靠依据，因此系统没有扩展回答，也没有暴露受限文档。</div></div>`
+    : '';
+  const inlineEvidence = citationCount
+    ? `<section class="evidence-list" aria-label="回答依据原文"><strong>回答依据原文</strong>${data.citations.slice(0, 2).map(c => `
+      <blockquote class="evidence-quote"><span>${escapeHtml(c.title)} · ${escapeHtml(c.chunk_id)}</span><p>${escapeHtml(c.quote)}</p></blockquote>`).join('')}</section>`
+    : '';
+  answerTab.innerHTML = `${refusal}<div class="answer">${escapeHtml(data.answer)}</div>${inlineEvidence}${evidence}${followUps}`;
 
   citationsTab.innerHTML = (data.citations || []).length
     ? data.citations.map(c => `
@@ -335,6 +342,7 @@ function renderEval(data) {
       <strong>&#x8bc4;&#x6d4b;&#x89e3;&#x8bfb;</strong>
       <div>&#x8fd9;&#x4e2a;&#x9762;&#x677f;&#x7528;&#x540c;&#x4e00;&#x5957; Agent &#x94fe;&#x8def;&#x56de;&#x653e;&#x79bb;&#x7ebf;&#x95ee;&#x9898;&#xff0c;&#x540c;&#x65f6;&#x68c0;&#x67e5;&#x68c0;&#x7d22;&#x8d28;&#x91cf;&#x3001;&#x5f15;&#x7528;&#x548c;&#x6743;&#x9650;&#x8fb9;&#x754c;&#x3002;</div>
     </div>
+    ${Object.keys(data.scenario_summary || {}).length ? `<div class="scenario-list">${Object.entries(data.scenario_summary).map(([name, item]) => `<span class="pill" data-level="${item.permission_leaks ? 'high' : 'low'}">${escapeHtml(name)} ${item.passed}/${item.total}</span>`).join('')}</div>` : ''}
   `;
   citationsTab.innerHTML = (data.cases || []).map((item, index) => `
     <div class="case-row">

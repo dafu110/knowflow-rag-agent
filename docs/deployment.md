@@ -86,6 +86,8 @@ Forward the audit file to your log pipeline if running beyond a single machine. 
 - spikes in `answer_type=refusal` for common business questions.
 - long-running or failed model provider calls if external LLM/embedding/reranker is enabled.
 
+`GET /health` includes provider retry, degradation, latency, and circuit-breaker summaries when a provider is configured. The Docker/Gunicorn deployment serves the same dashboard, static files, upload, document deletion, API, audit, and rate-limit behavior as the local server.
+
 ## Backup And Rollback
 
 - Back up `data/knowflow.db` and `data/audit.jsonl`.
@@ -97,4 +99,5 @@ Forward the audit file to your log pipeline if running beyond a single machine. 
 
 - The built-in HTTP server is intended for local development; use WSGI/Gunicorn for shared environments.
 - Local TF-IDF retrieval is strong for demos and small corpora, but larger corpora should use an external vector store or search service.
+- External embeddings are cached per chunk for the process lifetime and only the query is embedded on each request. Use a persistent vector store when replicas or corpus sizes outgrow this cache.
 - Audit logging is append-only JSONL and should be rotated by the hosting environment.

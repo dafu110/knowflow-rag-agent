@@ -225,6 +225,20 @@
       box-shadow: inset 3px 0 0 var(--accent);
       overflow-wrap: anywhere;
     }
+    .guardrail-notice {
+      border: 1px solid #d7a43b; border-radius: 6px; padding: 12px;
+      background: #fff9e9; color: #5b4300; line-height: 1.5;
+    }
+    .guardrail-notice strong { display: block; margin-bottom: 4px; }
+    .evidence-list { display: grid; gap: 8px; }
+    .evidence-list > strong { font-size: 13px; }
+    .evidence-quote {
+      margin: 0; padding: 11px 12px; border-left: 3px solid var(--accent);
+      background: var(--accent-soft); color: #23434a;
+    }
+    .evidence-quote span { display: block; color: var(--accent-strong); font-size: 11px; font-weight: 800; }
+    .evidence-quote p { margin: 6px 0 0; line-height: 1.55; font-size: 13px; }
+    .scenario-list { display: flex; flex-wrap: wrap; gap: 7px; }
     .meta { display: flex; flex-wrap: wrap; gap: 8px; }
     .meta .pill[data-level="low"],
     .meta .pill[data-level="medium"],

@@ -14,6 +14,8 @@ from knowflow.models import Principal
 from knowflow.server import HttpError, RateLimiter, create_handler, _safe_eval_path, _safe_upload_filename
 from knowflow.sqlite_store import SQLiteKnowledgeStore
 from knowflow.store import KnowledgeStore
+from knowflow.providers import ReliableProvider
+from knowflow.wsgi import create_application
 
 
 class FakeComposer:
@@ -21,6 +23,20 @@ class FakeComposer:
 
     def compose(self, question, evidence, citations):
         return f"LLM:{evidence[0]}\n\n依据：[{citations[0].chunk_id}]"
+
+
+class CountingEmbeddingProvider:
+    name = "counting_embeddings"
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(texts)
+        return [[float(len(text)), 1.0] for text in texts]
+
+    def status(self) -> dict[str, object]:
+        return {"calls": len(self.calls)}
 
 
 class RagAgentTest(unittest.TestCase):
@@ -234,6 +250,75 @@ class RagAgentTest(unittest.TestCase):
         self.assertEqual(rows[-1]["principal"]["user"], "alice")
         self.assertEqual(rows[-1]["citations"], 2)
         self.assertNotIn("answer", rows[-1])
+
+    def test_retriever_reuses_document_embeddings(self) -> None:
+        agent = self.build_agent()
+        provider = CountingEmbeddingProvider()
+        agent.embedding_provider = provider
+        principal = Principal(user="alice", roles={"sales"})
+        agent.ask("销售合同审批需要哪些材料？", principal)
+        agent.ask("合同常见退回原因是什么？", principal)
+        self.assertEqual(len(provider.calls), 3)
+        self.assertGreater(len(provider.calls[0]), 1)
+        self.assertEqual(len(provider.calls[1]), 1)
+        self.assertEqual(len(provider.calls[2]), 1)
+
+    def test_provider_retry_and_circuit_telemetry(self) -> None:
+        provider = ReliableProvider("test_provider")
+        for _ in range(3):
+            with self.assertRaises(RuntimeError):
+                provider._request(lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+        status = provider.status()
+        self.assertEqual(status["failures"], 3)
+        self.assertEqual(status["retries"], 3)
+        self.assertEqual(status["circuit"], "open")
+
+    def test_wsgi_serves_dashboard_static_upload_and_delete(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = KnowledgeStore(Path(tmp.name) / "store")
+        app = create_application(store, auth_tokens="")
+
+        def request(method: str, path: str, body: bytes = b"", content_type: str = "") -> tuple[str, dict[str, str], bytes]:
+            captured: dict[str, object] = {}
+
+            def start_response(status: str, headers: list[tuple[str, str]]) -> None:
+                captured["status"] = status
+                captured["headers"] = dict(headers)
+
+            environ = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "CONTENT_LENGTH": str(len(body)),
+                "CONTENT_TYPE": content_type,
+                "wsgi.input": __import__("io").BytesIO(body),
+                "REMOTE_ADDR": "127.0.0.1",
+            }
+            payload = b"".join(app(environ, start_response))
+            return str(captured["status"]), dict(captured["headers"]), payload
+
+        status, _, html = request("GET", "/")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"KnowFlow RAG Agent", html)
+        status, _, script = request("GET", "/static/app.js")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn(b"apiFetch", script)
+
+        boundary = "----knowflow-test"
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"policy.md\"\r\n"
+            "Content-Type: text/markdown\r\n\r\n# Policy\nA policy body.\r\n"
+            f"--{boundary}--\r\n"
+        ).encode("utf-8")
+        status, _, response = request("POST", "/upload", body, f"multipart/form-data; boundary={boundary}")
+        self.assertTrue(status.startswith("200"))
+        document_id = json.loads(response)["document_id"]
+        status, _, response = request("POST", "/ask", json.dumps({"question": "policy", "user": "alice", "roles": ["sales"]}).encode("utf-8"), "application/json")
+        self.assertTrue(status.startswith("200"))
+        self.assertIn("answer", json.loads(response))
+        status, _, response = request("DELETE", f"/documents?id={document_id}")
+        self.assertTrue(status.startswith("200"))
+        self.assertTrue(json.loads(response)["deleted"])
 
 
 if __name__ == "__main__":

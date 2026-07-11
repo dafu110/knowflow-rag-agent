@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -31,10 +32,76 @@ class EvidenceComposer(Protocol):
         ...
 
 
-class OpenAIEmbeddingProvider:
+class ProviderTelemetry:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls = 0
+        self.failures = 0
+        self.degradations = 0
+        self.retries = 0
+        self.total_latency_ms = 0.0
+        self.last_error = ""
+        self.open_until = 0.0
+
+    def record_success(self, latency_ms: float) -> None:
+        self.calls += 1
+        self.total_latency_ms += latency_ms
+        self.last_error = ""
+        self.open_until = 0.0
+
+    def record_failure(self, latency_ms: float, error: Exception) -> None:
+        self.calls += 1
+        self.failures += 1
+        self.degradations += 1
+        self.total_latency_ms += latency_ms
+        self.last_error = type(error).__name__
+        if self.failures >= 3:
+            self.open_until = time.monotonic() + 30.0
+
+    def status(self) -> dict[str, object]:
+        return {
+            "calls": self.calls,
+            "failures": self.failures,
+            "degradations": self.degradations,
+            "retries": self.retries,
+            "avg_latency_ms": round(self.total_latency_ms / self.calls, 1) if self.calls else 0.0,
+            "circuit": "open" if time.monotonic() < self.open_until else "closed",
+            "last_error": self.last_error or None,
+        }
+
+
+class ReliableProvider:
+    def __init__(self, name: str) -> None:
+        self.telemetry = ProviderTelemetry(name)
+
+    def status(self) -> dict[str, object]:
+        return self.telemetry.status()
+
+    def _request(self, call: Callable[[], dict[str, object]]) -> dict[str, object]:
+        if time.monotonic() < self.telemetry.open_until:
+            self.telemetry.degradations += 1
+            raise RuntimeError("provider circuit is open")
+        start = time.monotonic()
+        last_error: RuntimeError | None = None
+        for attempt in range(2):
+            try:
+                result = call()
+                self.telemetry.record_success((time.monotonic() - start) * 1000)
+                return result
+            except RuntimeError as error:
+                last_error = error
+                if attempt == 0:
+                    self.telemetry.retries += 1
+        assert last_error is not None
+        self.telemetry.record_failure((time.monotonic() - start) * 1000, last_error)
+        raise last_error
+
+
+class OpenAIEmbeddingProvider(ReliableProvider):
     name = "openai_embeddings"
 
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float = 20.0) -> None:
+        super().__init__(self.name)
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -42,15 +109,16 @@ class OpenAIEmbeddingProvider:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         payload = {"model": self.model, "input": texts}
-        data = _post_json(f"{self.base_url}/embeddings", payload, self.api_key, self.timeout)
+        data = self._request(lambda: _post_json(f"{self.base_url}/embeddings", payload, self.api_key, self.timeout))
         rows = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
         return [list(map(float, row["embedding"])) for row in rows]
 
 
-class OpenAIChatComposer:
+class OpenAIChatComposer(ReliableProvider):
     name = "openai_chat"
 
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float = 20.0) -> None:
+        super().__init__(self.name)
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -73,17 +141,18 @@ class OpenAIChatComposer:
             },
         ]
         payload = {"model": self.model, "messages": messages, "temperature": 0.1}
-        data = _post_json(f"{self.base_url}/chat/completions", payload, self.api_key, self.timeout)
+        data = self._request(lambda: _post_json(f"{self.base_url}/chat/completions", payload, self.api_key, self.timeout))
         content = data["choices"][0]["message"]["content"].strip()
         if "依据：" not in content:
             content = f"{content}\n\n依据：{citation_ids}"
         return content
 
 
-class ExternalReranker:
+class ExternalReranker(ReliableProvider):
     name = "external_reranker"
 
     def __init__(self, url: str, api_key: str = "", model: str = "", timeout: float = 20.0) -> None:
+        super().__init__(self.name)
         self.url = url
         self.api_key = api_key
         self.model = model
@@ -102,7 +171,7 @@ class ExternalReranker:
                 for index, result in enumerate(results)
             ],
         }
-        data = _post_json(self.url, payload, self.api_key, self.timeout)
+        data = self._request(lambda: _post_json(self.url, payload, self.api_key, self.timeout))
         if isinstance(data.get("scores"), list):
             return [float(score) for score in data["scores"]]
         scores = [0.0 for _ in results]

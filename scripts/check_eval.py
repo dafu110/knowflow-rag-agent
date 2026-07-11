@@ -20,7 +20,8 @@ from knowflow.store_factory import create_store
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run offline RAG evaluation with quality thresholds.")
     parser.add_argument("--docs", default="sample_docs", help="Directory with source documents.")
-    parser.add_argument("--eval-set", default="evals/rag_eval_set.jsonl", help="JSONL evaluation set.")
+    parser.add_argument("--eval-set", default="evals/rag_eval_set.jsonl", help="Primary JSONL evaluation set.")
+    parser.add_argument("--holdout-set", default="evals/rag_holdout.jsonl", help="Independent JSONL holdout set.")
     parser.add_argument("--min-recall", type=float, default=0.95)
     parser.add_argument("--min-mrr", type=float, default=0.90)
     parser.add_argument("--min-citation-accuracy", type=float, default=0.95)
@@ -34,7 +35,9 @@ def main() -> None:
         store.reset()
         documents = load_documents_from_path(Path(args.docs))
         store.add_documents(documents)
-        result = evaluate(RagAgent(store), Path(args.eval_set))
+        agent = RagAgent(store)
+        result = evaluate(agent, Path(args.eval_set))
+        holdout = evaluate(agent, Path(args.holdout_set))
         summary = {
             "total": result.total,
             "recall_at_k": result.recall_at_k,
@@ -42,9 +45,20 @@ def main() -> None:
             "citation_accuracy": result.citation_accuracy,
             "faithfulness": result.faithfulness,
             "permission_leaks": result.permission_leaks,
+            "scenarios": result.scenario_summary,
+            "holdout": {
+                "total": holdout.total,
+                "recall_at_k": holdout.recall_at_k,
+                "mrr": holdout.mrr,
+                "citation_accuracy": holdout.citation_accuracy,
+                "faithfulness": holdout.faithfulness,
+                "permission_leaks": holdout.permission_leaks,
+                "scenarios": holdout.scenario_summary,
+            },
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         failures = _threshold_failures(args, summary)
+        failures.extend(f"holdout {item}" for item in _threshold_failures(args, summary["holdout"]))
         if failures:
             print(json.dumps({"ok": False, "failures": failures, "result": asdict(result)}, ensure_ascii=False, indent=2))
             raise SystemExit(1)

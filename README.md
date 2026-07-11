@@ -40,13 +40,13 @@ docker compose up --build
 
 - 架构说明：[docs/architecture.md](docs/architecture.md)
 - 离线评测集：`evals/rag_eval_set.jsonl`，覆盖检索召回、引用准确率、忠实度、权限泄漏和拒答场景。
-- CI 质量门禁：`scripts/check_eval.py` 会在临时知识库中导入 `sample_docs/`，并要求 recall@k >= 0.95、MRR >= 0.90、引用准确率 >= 0.95、忠实度 >= 0.95、权限泄漏为 0。
+- CI 质量门禁：`scripts/check_eval.py` 会在临时知识库中导入 `sample_docs/`，分别运行主评测集和独立 holdout 集，并要求 recall@k >= 0.95、MRR >= 0.90、引用准确率 >= 0.95、忠实度 >= 0.95、权限泄漏为 0。holdout 覆盖同义改写、错别字、中英混输、无答案、跨文档和越权提示注入。
 
 ## 能力清单
 
 - 文档上传：Web 表单和 CLI 目录导入，支持 `.txt`、`.md`、`.csv`、`.json`。
 - 文档切分：按标题、段落和长度切分，并保留父级标题、来源、权限、业务标签等元数据。
-- 向量检索：内置 TF-IDF 余弦检索，零依赖可离线运行；生产模式可接 OpenAI-compatible embedding。
+- 向量检索：内置 TF-IDF 余弦检索，零依赖可离线运行；生产模式可接 OpenAI-compatible embedding，并在进程内缓存 chunk 向量，避免每次提问重复嵌入全库。
 - 混合检索：BM25 + TF-IDF/embedding 归一化融合，先做权限过滤，再做相关性召回。
 - 重排：结合关键词覆盖、短语命中、标题匹配、近邻密度和新鲜度进行二次排序；也可接外部 rerank 服务。
 - 引用来源：回答按证据块生成，并返回 `source#chunk_id` 引用。
@@ -55,7 +55,7 @@ docker compose up --build
 - 多轮追问：会话会保留最近问答和已引用证据，用于补全省略问题。
 - 权限过滤：文档可声明 `allowed_roles` 和 `allowed_users`，未授权内容不会进入检索和回答。
 - API 认证：支持 `KNOWFLOW_AUTH_TOKENS=token:user:role1,role2`，服务端从 token 推导身份，避免信任前端伪造角色。
-- 幻觉检测：答案句子必须被检索证据覆盖；无法支撑时返回“不知道/证据不足”。
+- 幻觉检测：答案句子必须被检索证据覆盖；无法支撑或当前身份无权访问时返回拒答，并明确呈现权限/证据边界。
 - 意图守门：敏感数据、临时授权、密钥等问题必须命中安全/权限语境证据，否则拒答。
 - 检索可解释：每条召回结果输出 BM25、vector、rerank、strong/weak evidence 和命中原因。
 

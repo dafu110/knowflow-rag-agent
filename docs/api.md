@@ -31,6 +31,8 @@ Returns service status and index statistics.
 }
 ```
 
+When external embedding, reranking, or LLM providers are enabled, `providers` also reports local call count, average latency, retry count, degradation count, last error type, and circuit state. Prompts, tokens, and secrets are never included.
+
 ## `GET /documents`
 
 Returns indexed document summaries.

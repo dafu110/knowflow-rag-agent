@@ -49,6 +49,8 @@ class RagAgent:
         self.embedding_provider = embedding_provider_from_env()
         self.reranker = reranker_from_env()
         self.composer = composer if composer is not None else composer_from_env()
+        self._retriever: HybridRetriever | None = None
+        self._retriever_signature: tuple[tuple[str, str], ...] = ()
 
     def ask(
         self,
@@ -59,7 +61,7 @@ class RagAgent:
     ) -> Answer:
         principal = principal or Principal()
         contextual_query = self._contextualize(question, session_id)
-        retriever = HybridRetriever(self.store.chunks(), embedding_provider=self.embedding_provider, reranker=self.reranker)
+        retriever = self._get_retriever()
         retrieved = retriever.search(contextual_query, principal=principal, top_k=top_k)
         answer = self._compose_answer(question, retrieved, session_id)
         self.memory.add(
@@ -74,6 +76,28 @@ class RagAgent:
             ),
         )
         return answer
+
+    def invalidate_retriever(self) -> None:
+        self._retriever = None
+        self._retriever_signature = ()
+
+    def warm_retriever(self) -> None:
+        self._get_retriever().warm_embeddings()
+
+    def provider_status(self) -> dict[str, object]:
+        providers = [provider for provider in (self.embedding_provider, self.reranker, self.composer) if provider]
+        return {
+            provider.name: provider.status() if hasattr(provider, "status") else {"state": "unavailable"}
+            for provider in providers
+        }
+
+    def _get_retriever(self) -> HybridRetriever:
+        chunks = self.store.chunks()
+        signature = tuple((chunk.id, chunk.text) for chunk in chunks)
+        if self._retriever is None or signature != self._retriever_signature:
+            self._retriever = HybridRetriever(chunks, embedding_provider=self.embedding_provider, reranker=self.reranker)
+            self._retriever_signature = signature
+        return self._retriever
 
     def _contextualize(self, question: str, session_id: str | None) -> str:
         history = self.memory.context_for(session_id)
