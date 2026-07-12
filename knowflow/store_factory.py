@@ -18,6 +18,9 @@ class Store(Protocol):
     def delete_document(self, document_id: str) -> bool:
         ...
 
+    def update_document_permissions(self, document_id: str, *, allowed_roles: set[str], allowed_users: set[str]) -> bool:
+        ...
+
     def documents(self) -> list[Document]:
         ...
 
@@ -25,6 +28,9 @@ class Store(Protocol):
         ...
 
     def stats(self) -> dict[str, int]:
+        ...
+
+    def index_version(self) -> str:
         ...
 
 

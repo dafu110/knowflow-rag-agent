@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from .models import Answer, Citation, Principal, RetrievedChunk
 from .providers import EvidenceComposer, composer_from_env, embedding_provider_from_env, reranker_from_env
-from .retrieval import HybridRetriever, expand_query_tokens, tokenize
+from .retrieval import RETRIEVAL_STRATEGIES, HybridRetriever, expand_query_tokens, tokenize
 from .store import KnowledgeStore
 
 
@@ -50,7 +50,7 @@ class RagAgent:
         self.reranker = reranker_from_env()
         self.composer = composer if composer is not None else composer_from_env()
         self._retriever: HybridRetriever | None = None
-        self._retriever_signature: tuple[tuple[str, str], ...] = ()
+        self._retriever_signature = ""
 
     def ask(
         self,
@@ -58,14 +58,23 @@ class RagAgent:
         principal: Principal | None = None,
         session_id: str | None = None,
         top_k: int = 6,
+        retrieval_strategy: str = "rerank",
     ) -> Answer:
+        if retrieval_strategy not in RETRIEVAL_STRATEGIES:
+            raise ValueError(f"unsupported retrieval strategy: {retrieval_strategy}")
         principal = principal or Principal()
-        contextual_query = self._contextualize(question, session_id)
+        memory_session_id = _memory_session_id(principal, session_id)
+        contextual_query = self._contextualize(question, memory_session_id)
         retriever = self._get_retriever()
-        retrieved = retriever.search(contextual_query, principal=principal, top_k=top_k)
+        retrieved = retriever.search(
+            contextual_query,
+            principal=principal,
+            top_k=top_k,
+            strategy=retrieval_strategy,
+        )
         answer = self._compose_answer(question, retrieved, session_id)
         self.memory.add(
-            session_id,
+            memory_session_id,
             Turn(
                 question=question,
                 answer=answer.answer,
@@ -79,7 +88,7 @@ class RagAgent:
 
     def invalidate_retriever(self) -> None:
         self._retriever = None
-        self._retriever_signature = ()
+        self._retriever_signature = ""
 
     def warm_retriever(self) -> None:
         self._get_retriever().warm_embeddings()
@@ -93,7 +102,7 @@ class RagAgent:
 
     def _get_retriever(self) -> HybridRetriever:
         chunks = self.store.chunks()
-        signature = tuple((chunk.id, chunk.text) for chunk in chunks)
+        signature = self.store.index_version()
         if self._retriever is None or signature != self._retriever_signature:
             self._retriever = HybridRetriever(chunks, embedding_provider=self.embedding_provider, reranker=self.reranker)
             self._retriever_signature = signature
@@ -177,6 +186,13 @@ def _no_evidence_answer(
         follow_up_questions=_clarification_prompts(question_style),
         session_id=session_id,
     )
+
+
+def _memory_session_id(principal: Principal, session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    role_key = ",".join(sorted(principal.roles))
+    return f"{principal.user}|{role_key}|{session_id}"
 
 
 def _clarify_answer(

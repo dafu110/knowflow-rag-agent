@@ -29,14 +29,14 @@ flowchart LR
 - `knowflow/providers.py`: contains OpenAI-compatible embedding/chat adapters and a generic HTTP reranker adapter.
 - `knowflow/server.py`: exposes upload, ask, eval, health, and document APIs with token auth, size limits, path restrictions, rate limiting, and security headers.
 - `knowflow/audit.py`: writes optional JSONL audit events for ask/upload/eval/delete/error flows when `KNOWFLOW_AUDIT_LOG` is configured.
-- `knowflow/evaluation.py`: runs the offline RAG eval set and reports recall@k, MRR, citation accuracy, faithfulness, and permission leaks.
+- `knowflow/evaluation.py`: runs offline evals, reports recall@k, MRR, citation accuracy, faithfulness, permission leaks, average latency, and compares the four retrieval strategies.
 
 ## Retrieval And Grounding
 
 1. The user identity is converted into a `Principal` with `user` and `roles`.
 2. Chunks not visible to that principal are removed before ranking.
 3. Queries are tokenized with Chinese character n-grams and expanded with domain synonyms.
-4. BM25 and TF-IDF scores are normalized and blended.
+4. BM25 and TF-IDF/embedding scores are normalized; the experiment runner can compare BM25, vector, hybrid, and rerank strategies.
 5. Optional embedding scores replace the local TF-IDF vector score when configured and available.
 6. Rerank signals reward term coverage, exact phrase matches, title matches, nearby terms, freshness, and optional external reranker scores.
 7. The agent only answers from strong evidence. Unsupported or sensitive questions fall back to refusal or clarification.
@@ -50,6 +50,8 @@ flowchart LR
 - Responses include CSP, `X-Frame-Options`, `X-Content-Type-Options`, and referrer policy headers.
 - Sensitive intents such as customer data, temporary authorization, keys, passwords, and backups must retrieve matching security evidence before the agent answers.
 - Audit logging records request/action summaries and request IDs without storing tokens, full answers, or uploaded document content.
+- Conversation memory keys include the principal and role set, so shared client session IDs cannot cross identity boundaries.
+- The index version includes chunk ACL metadata; permission updates and document deletion force a retriever rebuild.
 
 ## Evaluation Gate
 

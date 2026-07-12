@@ -158,7 +158,16 @@ class WebApplication:
                 raise HttpError(404, "not found")
             return self._file(file_path, MIME_TYPES[file_path.suffix], request_id)
         if path == "/health":
-            return self._json({"ok": True, "stats": self.store.stats(), "providers": self.agent.provider_status()}, 200, request_id)
+            return self._json(
+                {
+                    "ok": True,
+                    "stats": self.store.stats(),
+                    "index_version": self.store.index_version(),
+                    "providers": self.agent.provider_status(),
+                },
+                200,
+                request_id,
+            )
         if path == "/documents":
             return self._json({"documents": _document_rows(self.store)}, 200, request_id)
         raise HttpError(404, "not found")
@@ -314,6 +323,8 @@ def _safe_upload_filename(filename: str) -> str:
     suffix = Path(safe_name).suffix.lower()
     if not safe_name or safe_name in {".", ".."}:
         raise HttpError(400, "invalid filename")
+    if suffix in {".pdf", ".docx"}:
+        raise HttpError(415, f"{suffix[1:].upper()} uploads are not supported in the dependency-free build; convert the file to UTF-8 .txt, .md, .csv, or .json")
     if suffix not in SUPPORTED_EXTENSIONS:
         allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         raise HttpError(415, f"unsupported file type; allowed: {allowed}")

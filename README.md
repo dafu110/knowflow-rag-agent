@@ -39,19 +39,34 @@ docker compose up --build
 ## 架构与评测
 
 - 架构说明：[docs/architecture.md](docs/architecture.md)
+- RAG 设计与实验方法：[docs/rag-design.md](docs/rag-design.md)
+- 四策略实验结果与解释：[docs/retrieval-experiment.md](docs/retrieval-experiment.md)
 - 离线评测集：`evals/rag_eval_set.jsonl`，覆盖检索召回、引用准确率、忠实度、权限泄漏和拒答场景。
 - CI 质量门禁：`scripts/check_eval.py` 会在临时知识库中导入 `sample_docs/`，分别运行主评测集和独立 holdout 集，并要求 recall@k >= 0.95、MRR >= 0.90、引用准确率 >= 0.95、忠实度 >= 0.95、权限泄漏为 0。holdout 覆盖同义改写、错别字、中英混输、无答案、跨文档和越权提示注入。
 
+### 权限先于排序
+
+```mermaid
+flowchart LR
+  Q["问题 + 身份"] --> ACL["ACL 预过滤"]
+  I["文档 / chunks"] --> ACL
+  ACL -->|"仅可见 chunks"| R["BM25 / vector / hybrid / rerank"]
+  ACL -. "受限 chunks 不进入排序" .-> X["拒答或澄清"]
+  R --> C["引用与忠实度校验"] --> A["可追溯回答"]
+```
+
+权限过滤在排名前执行，因此受限内容不会出现在分数、调试轨迹、引用或最终上下文中。
+
 ## 能力清单
 
-- 文档上传：Web 表单和 CLI 目录导入，支持 `.txt`、`.md`、`.csv`、`.json`。
+- 文档上传：Web 表单和 CLI 目录导入，支持 UTF-8 `.txt`、`.md`、`.csv`、`.json`；`.pdf`、`.docx` 在零依赖版本会明确拒绝，并提示转换为受支持格式。
 - 文档切分：按标题、段落和长度切分，并保留父级标题、来源、权限、业务标签等元数据。
 - 向量检索：内置 TF-IDF 余弦检索，零依赖可离线运行；生产模式可接 OpenAI-compatible embedding，并在进程内缓存 chunk 向量，避免每次提问重复嵌入全库。
 - 混合检索：BM25 + TF-IDF/embedding 归一化融合，先做权限过滤，再做相关性召回。
 - 重排：结合关键词覆盖、短语命中、标题匹配、近邻密度和新鲜度进行二次排序；也可接外部 rerank 服务。
 - 引用来源：回答按证据块生成，并返回 `source#chunk_id` 引用。
 - LLM 合成：默认使用证据抽取式回答；配置后可调用 OpenAI-compatible chat model，并保留引用和忠实度检查。
-- 答案评估：离线评测集支持 recall@k、MRR、引用正确率、权限泄漏检查和忠实度评分。
+- 答案评估：离线评测集支持 recall@k、MRR、引用正确率、权限泄漏检查、忠实度评分和平均时延；`python scripts\retrieval_experiment.py` 可对比 BM25、vector、hybrid、rerank 四种策略。
 - 多轮追问：会话会保留最近问答和已引用证据，用于补全省略问题。
 - 权限过滤：文档可声明 `allowed_roles` 和 `allowed_users`，未授权内容不会进入检索和回答。
 - API 认证：支持 `KNOWFLOW_AUTH_TOKENS=token:user:role1,role2`，服务端从 token 推导身份，避免信任前端伪造角色。
@@ -74,6 +89,14 @@ tags: sales, contract
 ```
 
 没有声明权限的文档默认对所有用户可见。
+
+## 检索实验
+
+```powershell
+python scripts\retrieval_experiment.py
+```
+
+同一语料和评测集会输出四种策略的 Recall@K、MRR、引用准确率、忠实度、权限泄漏和平均时延。请以业务语料上的 held-out 结果选择生产策略；内置样本文档规模较小，不应单凭它宣称某个策略普遍更优。
 
 ## Web API
 
@@ -175,6 +198,8 @@ knowflow/
 
 - [Launch hardening checklist](docs/launch-hardening.md)
 - [ADR: Pre-ranking permission filtering](docs/adr/0001-pre-ranking-permission-filtering.md)
+- [RAG design and retrieval experiments](docs/rag-design.md)
+- [Retrieval experiment report](docs/retrieval-experiment.md)
 - [API reference](docs/api.md)
 - [Deployment and operations](docs/deployment.md)
 - Demo smoke flow: `python scripts\demo_flow.py`

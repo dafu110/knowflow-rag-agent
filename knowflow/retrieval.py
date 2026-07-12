@@ -35,6 +35,7 @@ DOMAIN_SYNONYMS = {
     "SLA": ["响应时间", "恢复目标", "升级机制"],
     "p0": ["生产系统", "大面积不可用", "15分钟", "4小时"],
 }
+RETRIEVAL_STRATEGIES = ("bm25", "vector", "hybrid", "rerank")
 
 
 def tokenize(text: str) -> list[str]:
@@ -79,7 +80,15 @@ class HybridRetriever:
         self._chunk_embeddings: list[list[float]] | None = None
         self._embedding_unavailable = False
 
-    def search(self, query: str, principal: Principal, top_k: int = 6) -> list[RetrievedChunk]:
+    def search(
+        self,
+        query: str,
+        principal: Principal,
+        top_k: int = 6,
+        strategy: str = "rerank",
+    ) -> list[RetrievedChunk]:
+        if strategy not in RETRIEVAL_STRATEGIES:
+            raise ValueError(f"unsupported retrieval strategy: {strategy}")
         if not query.strip() or not self.chunks:
             return []
         visible_indices = [i for i, chunk in enumerate(self.chunks) if chunk.is_visible_to(principal)]
@@ -106,7 +115,8 @@ class HybridRetriever:
             bm25_norm = bm25_score / max_bm25
             vector_norm = vector_score / max_vector
             rerank_score, reasons = self._rerank(query, query_tokens, chunk)
-            score = 0.45 * bm25_norm + 0.35 * vector_norm + 0.20 * rerank_score
+            score = _strategy_score(strategy, bm25_norm, vector_norm, rerank_score)
+            reasons.append(f"strategy={strategy}")
             results.append(
                 RetrievedChunk(
                     chunk=chunk,
@@ -118,7 +128,8 @@ class HybridRetriever:
                 )
             )
         results.sort(key=lambda item: item.score, reverse=True)
-        self._apply_external_rerank(query, results)
+        if strategy == "rerank":
+            self._apply_external_rerank(query, results)
         return results[:top_k]
 
     def _document_frequencies(self) -> dict[str, int]:
@@ -236,6 +247,16 @@ class HybridRetriever:
 def _chunk_text(chunk: Chunk) -> str:
     section = " > ".join(chunk.section_path)
     return f"{chunk.title}\n{section}\n{chunk.text}"
+
+
+def _strategy_score(strategy: str, bm25: float, vector: float, rerank: float) -> float:
+    if strategy == "bm25":
+        return bm25
+    if strategy == "vector":
+        return vector
+    if strategy == "hybrid":
+        return 0.55 * bm25 + 0.45 * vector
+    return 0.45 * bm25 + 0.35 * vector + 0.20 * rerank
 
 
 def _char_ngrams(text: str) -> list[str]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,37 @@ class KnowledgeStore:
 
     def stats(self) -> dict[str, int]:
         return {"documents": len(self.documents()), "chunks": len(self.chunks())}
+
+    def index_version(self) -> str:
+        digest = hashlib.sha256()
+        for chunk in self.chunks():
+            digest.update(chunk.id.encode("utf-8"))
+            digest.update(chunk.text.encode("utf-8"))
+            digest.update(",".join(sorted(chunk.allowed_roles)).encode("utf-8"))
+            digest.update(",".join(sorted(chunk.allowed_users)).encode("utf-8"))
+        return digest.hexdigest()[:16]
+
+    def update_document_permissions(
+        self,
+        document_id: str,
+        *,
+        allowed_roles: set[str],
+        allowed_users: set[str],
+    ) -> bool:
+        documents = self.documents()
+        target = next((document for document in documents if document.id == document_id), None)
+        if target is None:
+            return False
+        target.allowed_roles = set(allowed_roles)
+        target.allowed_users = set(allowed_users)
+        chunks = self.chunks()
+        for chunk in chunks:
+            if chunk.document_id == document_id:
+                chunk.allowed_roles = set(allowed_roles)
+                chunk.allowed_users = set(allowed_users)
+        _write_jsonl(self.documents_path, [_to_json(document) for document in documents])
+        _write_jsonl(self.chunks_path, [_to_json(chunk) for chunk in chunks])
+        return True
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

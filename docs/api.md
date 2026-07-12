@@ -27,7 +27,8 @@ Returns service status and index statistics.
   "stats": {
     "documents": 4,
     "chunks": 8
-  }
+  },
+  "index_version": "a1b2c3d4e5f67890"
 }
 ```
 
@@ -93,7 +94,8 @@ Limits:
 
 - Maximum upload size: 1 MB.
 - Filename is normalized to a basename.
-- Unsupported extensions are rejected.
+- UTF-8 `.txt`, `.md`, `.csv`, and `.json` are supported.
+- `.pdf` and `.docx` are explicitly rejected in the dependency-free build with conversion guidance; unsupported extensions are rejected.
 
 ## `DELETE /documents?id=...`
 

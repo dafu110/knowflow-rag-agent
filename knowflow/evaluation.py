@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from time import perf_counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,14 @@ class EvalResult:
     citation_accuracy: float
     faithfulness: float
     permission_leaks: int
+    avg_latency_ms: float
     scenario_summary: dict[str, dict[str, int]]
     cases: list[dict[str, Any]]
+
+
+@dataclass(slots=True)
+class RetrievalExperiment:
+    strategies: list[dict[str, Any]]
 
 
 def load_eval_set(path: Path) -> list[dict[str, Any]]:
@@ -32,7 +39,12 @@ def load_eval_set(path: Path) -> list[dict[str, Any]]:
     return cases
 
 
-def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
+def evaluate(
+    agent: RagAgent,
+    eval_path: Path,
+    top_k: int = 6,
+    retrieval_strategy: str = "rerank",
+) -> EvalResult:
     cases = load_eval_set(eval_path)
     details: list[dict[str, Any]] = []
     recall_hits = 0
@@ -42,13 +54,23 @@ def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
     citation_cases = 0
     faithfulness_scores = 0.0
     permission_leaks = 0
+    latency_ms_total = 0.0
     scenario_summary: dict[str, dict[str, int]] = {}
     for case in cases:
         scenario = str(case.get("scenario", "core"))
         scenario_row = scenario_summary.setdefault(scenario, {"total": 0, "passed": 0, "permission_leaks": 0})
         scenario_row["total"] += 1
         principal = Principal(user=case.get("user", "eval"), roles=set(case.get("roles", [])))
-        answer = agent.ask(case["question"], principal=principal, session_id=f"eval-{len(details)}", top_k=top_k)
+        started = perf_counter()
+        answer = agent.ask(
+            case["question"],
+            principal=principal,
+            session_id=f"eval-{retrieval_strategy}-{len(details)}",
+            top_k=top_k,
+            retrieval_strategy=retrieval_strategy,
+        )
+        latency_ms = (perf_counter() - started) * 1000
+        latency_ms_total += latency_ms
         expected_sources = set(case.get("expected_sources", []))
         retrieved_sources = [Path(item["source"]).name for item in answer.retrieval_debug]
         cited_sources = [Path(citation.source).name for citation in answer.citations]
@@ -83,6 +105,8 @@ def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
         details.append(
             {
                 "scenario": scenario,
+                "retrieval_strategy": retrieval_strategy,
+                "latency_ms": round(latency_ms, 2),
                 "question": case["question"],
                 "answer": answer.answer,
                 "confidence": answer.confidence,
@@ -107,9 +131,29 @@ def evaluate(agent: RagAgent, eval_path: Path, top_k: int = 6) -> EvalResult:
         citation_accuracy=round(citation_hits / citation_total, 3),
         faithfulness=round(faithfulness_scores / total, 3),
         permission_leaks=permission_leaks,
+        avg_latency_ms=round(latency_ms_total / total, 2),
         scenario_summary=scenario_summary,
         cases=details,
     )
+
+
+def compare_retrieval_strategies(agent: RagAgent, eval_path: Path, top_k: int = 6) -> RetrievalExperiment:
+    rows = []
+    for strategy in ("bm25", "vector", "hybrid", "rerank"):
+        result = evaluate(agent, eval_path, top_k=top_k, retrieval_strategy=strategy)
+        rows.append(
+            {
+                "strategy": strategy,
+                "total": result.total,
+                "recall_at_k": result.recall_at_k,
+                "mrr": result.mrr,
+                "citation_accuracy": result.citation_accuracy,
+                "faithfulness": result.faithfulness,
+                "permission_leaks": result.permission_leaks,
+                "avg_latency_ms": result.avg_latency_ms,
+            }
+        )
+    return RetrievalExperiment(strategies=rows)
 
 
 def _first_rank(retrieved_sources: list[str], expected_sources: set[str]) -> int | None:

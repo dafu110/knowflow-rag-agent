@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict
@@ -64,6 +65,42 @@ class SQLiteKnowledgeStore:
             documents = db.execute("select count(*) from documents").fetchone()[0]
             chunks = db.execute("select count(*) from chunks").fetchone()[0]
         return {"documents": int(documents), "chunks": int(chunks)}
+
+    def index_version(self) -> str:
+        digest = hashlib.sha256()
+        with closing(self._connect()) as db:
+            rows = db.execute("select payload from chunks order by id").fetchall()
+        for row in rows:
+            chunk = _chunk_from_json(json.loads(row[0]))
+            digest.update(chunk.id.encode("utf-8"))
+            digest.update(chunk.text.encode("utf-8"))
+            digest.update(",".join(sorted(chunk.allowed_roles)).encode("utf-8"))
+            digest.update(",".join(sorted(chunk.allowed_users)).encode("utf-8"))
+        return digest.hexdigest()[:16]
+
+    def update_document_permissions(
+        self,
+        document_id: str,
+        *,
+        allowed_roles: set[str],
+        allowed_users: set[str],
+    ) -> bool:
+        with closing(self._connect()) as db:
+            row = db.execute("select payload from documents where id = ?", (document_id,)).fetchone()
+            if row is None:
+                return False
+            document = _document_from_json(json.loads(row[0]))
+            document.allowed_roles = set(allowed_roles)
+            document.allowed_users = set(allowed_users)
+            chunks = [_chunk_from_json(json.loads(item[0])) for item in db.execute("select payload from chunks where document_id = ?", (document_id,))]
+            for chunk in chunks:
+                chunk.allowed_roles = set(allowed_roles)
+                chunk.allowed_users = set(allowed_users)
+            with db:
+                db.execute("update documents set payload = ? where id = ?", (json.dumps(_to_json(document), ensure_ascii=False), document_id))
+                for chunk in chunks:
+                    db.execute("update chunks set payload = ? where id = ?", (json.dumps(_to_json(chunk), ensure_ascii=False), chunk.id))
+        return True
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)

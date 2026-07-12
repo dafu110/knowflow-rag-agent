@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from knowflow.agent import RagAgent
 from knowflow.chunking import load_documents_from_path
-from knowflow.evaluation import evaluate
+from knowflow.evaluation import compare_retrieval_strategies, evaluate
 from knowflow.store_factory import create_store
 
 
@@ -27,6 +27,7 @@ def main() -> None:
     parser.add_argument("--min-citation-accuracy", type=float, default=0.95)
     parser.add_argument("--min-faithfulness", type=float, default=0.95)
     parser.add_argument("--max-permission-leaks", type=int, default=0)
+    parser.add_argument("--skip-experiment", action="store_true", help="Skip the four-strategy comparison.")
     args = parser.parse_args()
 
     store_dir = Path(tempfile.mkdtemp(prefix="knowflow-eval-"))
@@ -38,6 +39,7 @@ def main() -> None:
         agent = RagAgent(store)
         result = evaluate(agent, Path(args.eval_set))
         holdout = evaluate(agent, Path(args.holdout_set))
+        experiment = None if args.skip_experiment else compare_retrieval_strategies(agent, Path(args.eval_set))
         summary = {
             "total": result.total,
             "recall_at_k": result.recall_at_k,
@@ -55,6 +57,7 @@ def main() -> None:
                 "permission_leaks": holdout.permission_leaks,
                 "scenarios": holdout.scenario_summary,
             },
+            "retrieval_experiment": experiment.strategies if experiment else [],
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         failures = _threshold_failures(args, summary)
