@@ -23,6 +23,14 @@ python -m knowflow.cli serve --port 8765
 
 打开 `http://127.0.0.1:8765`。
 
+### 本地运行命令
+
+```powershell
+python -m knowflow.cli ingest sample_docs --reset
+python -m knowflow.cli ask "销售合同审批需要哪些材料？" --user alice --roles sales
+python -m knowflow.cli eval evals/rag_eval_set.jsonl
+```
+
 ## 演示与验证
 
 1. 按“快速开始”导入 `sample_docs/`，完成一次带角色的问答和离线评测。
@@ -37,7 +45,7 @@ python -m knowflow.cli serve --port 8765
 - 离线 TF-IDF 策略，以及可选的 OpenAI-compatible embedding、LLM 和 reranker。
 - 多轮会话、权限过滤、幻觉检测和离线评测门禁。
 
-### 本地命令
+### 进阶命令
 
 ```powershell
 python -m pip install -e ".[dev]"
