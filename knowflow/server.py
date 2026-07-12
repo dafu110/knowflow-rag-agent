@@ -3,6 +3,7 @@
 import hmac
 import json
 import os
+import threading
 import uuid
 from dataclasses import asdict, dataclass
 from email import policy
@@ -35,6 +36,8 @@ MAX_SESSION_TURNS = 12
 ADMIN_ROLE = "admin"
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_REQUESTS = 120
+MAX_CONCURRENT_REQUESTS = 32
+REQUEST_READ_TIMEOUT_SECONDS = 5.0
 MIME_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
@@ -63,16 +66,18 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.requests: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
 
     def allow(self, key: str) -> bool:
-        now = monotonic()
-        recent = [stamp for stamp in self.requests.get(key, []) if now - stamp < self.window_seconds]
-        if len(recent) >= self.max_requests:
+        with self._lock:
+            now = monotonic()
+            recent = [stamp for stamp in self.requests.get(key, []) if now - stamp < self.window_seconds]
+            if len(recent) >= self.max_requests:
+                self.requests[key] = recent
+                return False
+            recent.append(now)
             self.requests[key] = recent
-            return False
-        recent.append(now)
-        self.requests[key] = recent
-        return True
+            return True
 
 
 @dataclass(slots=True)
@@ -130,11 +135,14 @@ class WebApplication:
         headers: dict[str, str],
         body: bytes,
         client: str = "unknown",
+        rate_limited: bool = False,
     ) -> WebResponse:
         request_id = headers.get("x-request-id") or uuid.uuid4().hex
         try:
-            if not self.rate_limiter.allow(client):
-                raise HttpError(429, "rate limit exceeded")
+            if not rate_limited:
+                response = self.rate_limit_response(target, headers, client, request_id=request_id)
+                if response is not None:
+                    return response
             parsed = urlparse(target)
             if method == "GET":
                 return self._get(parsed.path, headers, request_id)
@@ -152,6 +160,20 @@ class WebApplication:
         except ValueError as error:
             self._audit("request_error", {"method": method, "path": urlparse(target).path, "status": 400, "error": str(error)}, request_id, client)
             return self._json({"ok": False, "error": {"status": 400, "message": str(error)}}, 400, request_id)
+
+    def rate_limit_response(
+        self,
+        target: str,
+        headers: dict[str, str],
+        client: str,
+        *,
+        request_id: str | None = None,
+    ) -> WebResponse | None:
+        if self.rate_limiter.allow(client):
+            return None
+        request_id = request_id or headers.get("x-request-id") or uuid.uuid4().hex
+        self._audit("request_error", {"path": urlparse(target).path, "status": 429, "error": "rate limit exceeded"}, request_id, client)
+        return self._json({"ok": False, "error": {"status": 429, "message": "rate limit exceeded"}}, 429, request_id)
 
     def _get(self, path: str, headers: dict[str, str], request_id: str) -> WebResponse:
         if path == "/":
@@ -362,8 +384,32 @@ class TokenAuthenticator:
         return None
 
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Reject excess connections instead of creating unbounded request threads."""
+
+    def __init__(self, *args, max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS, **kwargs) -> None:
+        self._request_slots = threading.BoundedSemaphore(max_concurrent_requests)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
 def run_server(store: Store, host: str = "127.0.0.1", port: int = 8765) -> None:
-    server = ThreadingHTTPServer((host, port), create_handler(store))
+    server = BoundedThreadingHTTPServer((host, port), create_handler(store))
     print(f"KnowFlow RAG Agent running at http://{host}:{port}")
     server.serve_forever()
 
@@ -373,6 +419,8 @@ def _content_length(value: str | None, *, max_bytes: int) -> int:
         length = int(value or "0")
     except ValueError as error:
         raise HttpError(400, "invalid content-length") from error
+    if length < 0:
+        raise HttpError(400, "invalid content-length")
     if length > max_bytes:
         raise HttpError(413, "request body is too large")
     return length
@@ -540,6 +588,10 @@ def create_handler(
     )
 
     class Handler(BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            self.request.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
+            super().setup()
+
         def do_GET(self) -> None:
             self._respond()
 
@@ -550,18 +602,23 @@ def create_handler(
             self._respond()
 
         def _respond(self) -> None:
-            length = _content_length(self.headers.get("content-length"), max_bytes=MAX_UPLOAD_BYTES)
-            response = web.handle(
-                self.command,
-                self.path,
-                headers={
-                    "content-type": self.headers.get("content-type", ""),
-                    "x-knowflow-token": self.headers.get("x-knowflow-token", ""),
-                    "x-request-id": self.headers.get("x-request-id", ""),
-                },
-                body=self.rfile.read(length),
-                client=self.client_address[0] if self.client_address else "unknown",
-            )
+            headers = {
+                "content-type": self.headers.get("content-type", ""),
+                "x-knowflow-token": self.headers.get("x-knowflow-token", ""),
+                "x-request-id": self.headers.get("x-request-id", ""),
+            }
+            client = self.client_address[0] if self.client_address else "unknown"
+            response = web.rate_limit_response(self.path, headers, client)
+            if response is None:
+                length = _content_length(self.headers.get("content-length"), max_bytes=MAX_UPLOAD_BYTES)
+                response = web.handle(
+                    self.command,
+                    self.path,
+                    headers=headers,
+                    body=self.rfile.read(length),
+                    client=client,
+                    rate_limited=True,
+                )
             self.send_response(response.status)
             for name, value in response.headers.items():
                 self.send_header(name, value)

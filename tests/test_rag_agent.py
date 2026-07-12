@@ -11,7 +11,7 @@ from knowflow.audit import AuditLogger
 from knowflow.chunking import load_documents_from_path
 from knowflow.evaluation import compare_retrieval_strategies, evaluate
 from knowflow.models import Principal
-from knowflow.server import HttpError, RateLimiter, WebApplication, create_handler, _safe_eval_path, _safe_upload_filename
+from knowflow.server import HttpError, RateLimiter, WebApplication, _content_length, create_handler, _safe_eval_path, _safe_upload_filename
 from knowflow.session_store import SessionStore
 from knowflow.sqlite_store import SQLiteKnowledgeStore
 from knowflow.store import KnowledgeStore
@@ -216,6 +216,25 @@ class RagAgentTest(unittest.TestCase):
         connection.close()
         self.assertEqual(response.status, 200)
         self.assertTrue(payload["citations"])
+
+    def test_rate_limit_can_reject_before_request_body_is_read(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        app = WebApplication(
+            KnowledgeStore(Path(tmp.name) / "store"),
+            rate_limiter=RateLimiter(max_requests=1, window_seconds=60),
+        )
+
+        first = app.rate_limit_response("/ask", {"x-request-id": "first"}, "127.0.0.1")
+        rejected = app.rate_limit_response("/ask", {"x-request-id": "second"}, "127.0.0.1")
+
+        self.assertIsNone(first)
+        self.assertIsNotNone(rejected)
+        self.assertEqual(rejected.status, 429)
+
+    def test_negative_content_length_is_rejected(self) -> None:
+        with self.assertRaises(HttpError):
+            _content_length("-1", max_bytes=1_000_000)
 
     def test_auth_token_mapping_overrides_spoofed_roles(self) -> None:
         tmp = TemporaryDirectory()

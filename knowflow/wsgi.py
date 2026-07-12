@@ -23,14 +23,19 @@ def create_application(
         path = str(environ.get("PATH_INFO", "/"))
         query = str(environ.get("QUERY_STRING", ""))
         target = f"{path}?{query}" if query else path
-        length = _content_length(environ.get("CONTENT_LENGTH"))
-        body = environ["wsgi.input"].read(length) if length else b""
         headers = {
             "content-type": str(environ.get("CONTENT_TYPE", "")),
             "x-knowflow-token": str(environ.get("HTTP_X_KNOWFLOW_TOKEN", "")),
             "x-request-id": str(environ.get("HTTP_X_REQUEST_ID", "")),
         }
-        response = web.handle(method, target, headers=headers, body=body, client=str(environ.get("REMOTE_ADDR", "unknown")))
+        client = str(environ.get("REMOTE_ADDR", "unknown"))
+        limited = web.rate_limit_response(target, headers, client)
+        if limited is not None:
+            start_response(limited.status_line, list(limited.headers.items()))
+            return [limited.body]
+        length = _content_length(environ.get("CONTENT_LENGTH"))
+        body = environ["wsgi.input"].read(length) if length else b""
+        response = web.handle(method, target, headers=headers, body=body, client=client, rate_limited=True)
         start_response(response.status_line, list(response.headers.items()))
         return [response.body]
 

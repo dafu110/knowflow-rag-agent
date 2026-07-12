@@ -195,7 +195,7 @@ $env:KNOWFLOW_RERANK_API_KEY="..."
 
 ### WSGI 部署
 
-本地 `serve` 命令用于开发和演示。生产部署建议使用 WSGI 服务器托管 API：
+本地 `serve` 命令用于开发和演示。它在读取请求体前执行限流，并对连接读取设置超时和并发上限；生产部署仍建议使用具备连接、请求体与工作线程限制的 WSGI 服务器和反向代理托管 API：
 
 ```bash
 KNOWFLOW_STORE_BACKEND=sqlite \
