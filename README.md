@@ -23,10 +23,9 @@ python -m knowflow.cli serve --port 8765
 
 打开 `http://127.0.0.1:8765`。
 
-### 本地运行命令
+### 验证命令
 
 ```powershell
-python -m knowflow.cli ingest sample_docs --reset
 python -m knowflow.cli ask "销售合同审批需要哪些材料？" --user alice --roles sales
 python -m knowflow.cli eval evals/rag_eval_set.jsonl
 ```
@@ -45,22 +44,7 @@ python -m knowflow.cli eval evals/rag_eval_set.jsonl
 - 离线 TF-IDF 策略，以及可选的 OpenAI-compatible embedding、LLM 和 reranker。
 - 多轮会话、权限过滤、幻觉检测和离线评测门禁。
 
-### 进阶命令
-
-```powershell
-python -m pip install -e ".[dev]"
-```
-
-```powershell
-python -m knowflow.cli ingest sample_docs --reset
-python -m knowflow.cli ask "销售合同审批需要哪些材料？" --user alice --roles sales
-python -m knowflow.cli eval evals/rag_eval_set.jsonl
-python -m knowflow.cli serve --port 8765
-```
-
-打开 `http://127.0.0.1:8765` 可使用上传和问答界面。
-
-首次验证应看到：问答结果包含来源引用，`eval` 输出检索、引用、忠实度和权限泄漏指标。可重复执行完整烟雾流程：`python scripts\demo_flow.py`。
+首次验证应看到：问答结果包含来源引用，`eval` 输出检索、引用、忠实度和权限泄漏指标。完整烟雾流程为 `python scripts\demo_flow.py`。
 
 ### 运行前提与默认行为
 
@@ -68,16 +52,6 @@ python -m knowflow.cli serve --port 8765
 - CI 在 Python 3.10、3.11 和 3.12 上执行编译检查、单元测试、离线 RAG 评测门禁和角色化演示流程。
 - CLI 和 WSGI 入口默认将知识库存储在 `data/knowledge_store`，后端为 JSONL。SQLite 是显式选择的持久化后端，例如 `--store-backend sqlite --store data/knowflow.db`。
 - 未配置 provider 时，KnowFlow 离线使用 TF-IDF 检索和基于证据的抽取式回答。配置 provider 与 API key 后才调用 OpenAI-compatible embedding 和 LLM；默认模型名分别为 `text-embedding-3-small` 与 `gpt-4.1-mini`。仅在设置 `KNOWFLOW_RERANK_URL` 后才会调用外部 reranker。
-
-### Docker 运行
-
-仓库包含 `.env.example`、`Dockerfile` 和 `docker-compose.yml`，可直接启动 SQLite 持久化的 Web 服务：
-
-```powershell
-docker compose up --build
-```
-
-启动后访问 `http://127.0.0.1:8765`。正式部署前建议复制 `.env.example` 为 `.env` 并替换真实 token、模型密钥和网关地址；`.env` 已被忽略，不会进入 Git。
 
 ## 架构与实现
 
@@ -173,6 +147,14 @@ python -m knowflow.cli serve --port 8765
 CI 在 Python 3.10、3.11 和 3.12 上执行编译、单元测试、离线 RAG 评测与角色化演示流程；本地可运行 `python scripts\check_eval.py` 复现评测门禁。
 
 ## 部署与生产
+
+仓库包含 `.env.example`、`Dockerfile` 和 `docker-compose.yml`。Docker 运行使用 SQLite 持久化，适合本地演示：
+
+```powershell
+docker compose up --build
+```
+
+启动后访问 `http://127.0.0.1:8765`。正式部署前复制 `.env.example` 为 `.env`，并替换真实 token、模型密钥和网关地址；`.env` 已被忽略，不会进入 Git。
 
 ### SQLite 存储
 
