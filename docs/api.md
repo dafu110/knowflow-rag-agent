@@ -1,20 +1,20 @@
 # KnowFlow API
 
-KnowFlow exposes a small JSON and multipart API for local demos, internal tools, and WSGI deployments. If `KNOWFLOW_AUTH_TOKENS` is configured, requests must include `x-knowflow-token`; the server derives `user` and `roles` from that token and ignores spoofed request-body identity fields.
+KnowFlow exposes a small JSON and multipart API for local demos, internal tools, and WSGI deployments. If `KNOWFLOW_AUTH_TOKENS` is configured, requests must include `x-knowflow-token`; the server derives `user` and `roles` from that token and ignores spoofed request-body identity fields. Document management and evaluation endpoints additionally require the `admin` role.
 
 All responses include `x-request-id`. Clients may send their own `x-request-id`; otherwise the server generates one.
 
 ## Authentication
 
 ```http
-x-knowflow-token: sales-token
+x-knowflow-token: <role-specific-token>
 x-request-id: demo-001
 ```
 
 `KNOWFLOW_AUTH_TOKENS` format:
 
 ```text
-token:user:role1,role2;another-token:ciso:security
+token:user:role1,role2;another-token:admin:admin
 ```
 
 ## `GET /health`
@@ -36,7 +36,7 @@ When external embedding, reranking, or LLM providers are enabled, `providers` al
 
 ## `GET /documents`
 
-Returns indexed document summaries.
+Returns indexed document summaries. Requires an authenticated `admin` token when token authentication is enabled.
 
 ```json
 {
@@ -81,11 +81,11 @@ Response fields:
 
 ## `POST /upload`
 
-Uploads and indexes one `.txt`, `.md`, `.csv`, or `.json` file.
+Uploads and indexes one `.txt`, `.md`, `.csv`, or `.json` file. Requires an authenticated `admin` token when token authentication is enabled.
 
 ```powershell
 curl.exe -X POST http://127.0.0.1:8765/upload `
-  -H "x-knowflow-token: sales-token" `
+  -H "x-knowflow-token: <admin-token>" `
   -F "file=@sample_docs/sales_contract.md" `
   -F "roles=sales,legal"
 ```
@@ -99,16 +99,16 @@ Limits:
 
 ## `DELETE /documents?id=...`
 
-Deletes a document and all related chunks.
+Deletes a document and all related chunks. Requires an authenticated `admin` token when token authentication is enabled.
 
 ```powershell
 curl.exe -X DELETE "http://127.0.0.1:8765/documents?id=1700b40ae1d834c2" `
-  -H "x-knowflow-token: sales-token"
+  -H "x-knowflow-token: <admin-token>"
 ```
 
 ## `POST /eval`
 
-Runs the default offline evaluation set from `evals/rag_eval_set.jsonl`.
+Runs the default offline evaluation set from `evals/rag_eval_set.jsonl`. Requires an authenticated `admin` token when token authentication is enabled.
 
 ```json
 {
@@ -120,6 +120,10 @@ Runs the default offline evaluation set from `evals/rag_eval_set.jsonl`.
   "permission_leaks": 0
 }
 ```
+
+## Session Collaboration
+
+`GET/POST/DELETE /sessions` requires token authentication. Only the owner can update, share, or delete a session. Shared users can read a session; when they continue the conversation in the web app, it is saved as their own session copy so the source session remains unchanged.
 
 ## Audit Log
 

@@ -16,7 +16,8 @@ from .agent import RagAgent
 from .audit import AuditLogger, audit_logger_from_env
 from .chunking import SUPPORTED_EXTENSIONS, parse_document
 from .evaluation import evaluate
-from .models import Document, Principal
+from .models import Document, Principal, utc_now
+from .session_store import SessionStore
 from .store_factory import Store
 
 
@@ -26,8 +27,12 @@ STATIC_ROOT = WEB_ROOT / "static"
 EVAL_ROOT = Path("evals").resolve()
 DEFAULT_EVAL_PATH = EVAL_ROOT / "rag_eval_set.jsonl"
 MAX_JSON_BYTES = 32_000
+MAX_SESSION_JSON_BYTES = 128_000
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_QUESTION_CHARS = 2_000
+MAX_SESSION_TITLE_CHARS = 120
+MAX_SESSION_TURNS = 12
+ADMIN_ROLE = "admin"
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_REQUESTS = 120
 MIME_TYPES = {
@@ -107,6 +112,7 @@ class WebApplication:
         auth_tokens: str | None = None,
         rate_limiter: RateLimiter | None = None,
         audit_logger: AuditLogger | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         self.store = store
         self.agent = agent or RagAgent(store)
@@ -114,6 +120,7 @@ class WebApplication:
         self.authenticator = TokenAuthenticator(auth_tokens if auth_tokens is not None else os.environ.get("KNOWFLOW_AUTH_TOKENS", ""))
         self.rate_limiter = rate_limiter or RateLimiter()
         self.audit_logger = audit_logger if audit_logger is not None else audit_logger_from_env()
+        self.session_store = session_store or SessionStore(os.environ.get("KNOWFLOW_SESSION_STORE", "data/knowflow_sessions.db"))
 
     def handle(
         self,
@@ -169,7 +176,23 @@ class WebApplication:
                 request_id,
             )
         if path == "/documents":
+            self._management_principal(headers)
             return self._json({"documents": _document_rows(self.store)}, 200, request_id)
+        if path == "/identity":
+            if not self.authenticator.enabled:
+                return self._json({"authenticated": False}, 200, request_id)
+            principal = self._authenticated_principal(headers)
+            return self._json({"authenticated": True, "user": principal.user, "roles": sorted(principal.roles)}, 200, request_id)
+        if path == "/sessions":
+            principal = self._authenticated_principal(headers)
+            return self._json({"sessions": self.session_store.list_for(principal.user)}, 200, request_id)
+        session_id = _session_id_from_path(path)
+        if session_id:
+            principal = self._authenticated_principal(headers)
+            session = self.session_store.get_for(session_id, principal.user)
+            if session is None:
+                raise HttpError(404, "session not found")
+            return self._json({"session": session}, 200, request_id)
         raise HttpError(404, "not found")
 
     def _post(self, parsed: object, headers: dict[str, str], body: bytes, request_id: str) -> WebResponse:
@@ -180,11 +203,38 @@ class WebApplication:
             question = str(payload.get("question", "")).strip()
             if len(question) > MAX_QUESTION_CHARS:
                 raise HttpError(413, "question is too long")
-            answer = self.agent.ask(question, principal=principal, session_id=payload.get("session_id"), top_k=_clamp_int(payload.get("top_k", 6), minimum=1, maximum=20))
+            session_id = _optional_session_id(payload.get("session_id"))
+            if session_id and self.authenticator.enabled:
+                session = self.session_store.get_for(session_id, principal.user)
+                if session:
+                    self.agent.restore_session(principal, session_id, session["turns"])
+            answer = self.agent.ask(question, principal=principal, session_id=session_id, top_k=_clamp_int(payload.get("top_k", 6), minimum=1, maximum=20))
             self._audit("ask", {"principal": _principal_summary(principal), "question_chars": len(question), "answer_type": answer.answer_type, "citations": len(answer.citations), "hallucination_risk": answer.hallucination_risk, "status": 200}, request_id)
             return self._json(asdict(answer), 200, request_id)
+        if path == "/sessions":
+            principal = self._authenticated_principal(headers)
+            payload = self._read_json(headers, body, max_bytes=MAX_SESSION_JSON_BYTES)
+            session = _session_payload(payload)
+            try:
+                saved = self.session_store.save(session, principal.user)
+            except PermissionError as error:
+                raise HttpError(403, str(error)) from error
+            except OverflowError as error:
+                raise HttpError(429, str(error)) from error
+            self._audit("save_session", {"principal": _principal_summary(principal), "session_id": saved["id"], "turn_count": len(saved["turns"]), "status": 200}, request_id)
+            return self._json({"session": saved}, 200, request_id)
+        session_id = _shared_session_id(path)
+        if session_id:
+            principal = self._authenticated_principal(headers)
+            payload = self._read_json(headers, body)
+            collaborators = _collaborators(payload.get("users", []))
+            shared = self.session_store.share(session_id, principal.user, collaborators)
+            if shared is None:
+                raise HttpError(404, "session not found")
+            self._audit("share_session", {"principal": _principal_summary(principal), "session_id": session_id, "collaborators": collaborators, "status": 200}, request_id)
+            return self._json({"session": shared}, 200, request_id)
         if path == "/upload":
-            principal = self._principal({}, headers)
+            principal = self._management_principal(headers)
             form = self._read_multipart(headers, body)
             file_item = form.get("file")
             if not file_item or not file_item.get("filename"):
@@ -203,7 +253,7 @@ class WebApplication:
             self._audit("upload", {"principal": _principal_summary(principal), "filename": filename, "document_id": document.id, "chunks_added": added, "allowed_roles_count": len(document.allowed_roles), "allowed_users_count": len(document.allowed_users), "status": 200}, request_id)
             return self._json({"added": added, "document_id": document.id, "stats": self.store.stats(), "documents": _document_rows(self.store)}, 200, request_id)
         if path == "/eval":
-            principal = self._principal({}, headers)
+            principal = self._management_principal(headers)
             eval_path = _safe_eval_path(parse_qs(parsed.query).get("path", ["rag_eval_set.jsonl"])[0])
             result = evaluate(self.agent, eval_path)
             self._audit("eval", {"principal": _principal_summary(principal), "eval_path": eval_path.name, "total": result.total, "recall_at_k": result.recall_at_k, "permission_leaks": result.permission_leaks, "status": 200}, request_id)
@@ -212,8 +262,15 @@ class WebApplication:
 
     def _delete(self, parsed: object, headers: dict[str, str], request_id: str) -> WebResponse:
         if parsed.path != "/documents":
-            raise HttpError(404, "not found")
-        principal = self._principal({}, headers)
+            session_id = _session_id_from_path(parsed.path)
+            if not session_id:
+                raise HttpError(404, "not found")
+            principal = self._authenticated_principal(headers)
+            if not self.session_store.delete(session_id, principal.user):
+                raise HttpError(404, "session not found")
+            self._audit("delete_session", {"principal": _principal_summary(principal), "session_id": session_id, "status": 200}, request_id)
+            return self._json({"deleted": True}, 200, request_id)
+        principal = self._management_principal(headers)
         document_id = parse_qs(parsed.query).get("id", [""])[0]
         if not document_id:
             raise HttpError(400, "missing document id")
@@ -233,8 +290,19 @@ class WebApplication:
             raise HttpError(401, "missing or invalid api token")
         return Principal(user=str(payload.get("user", "anonymous")), roles=set(payload.get("roles", [])))
 
-    def _read_json(self, headers: dict[str, str], body: bytes) -> dict[str, object]:
-        if len(body) > MAX_JSON_BYTES:
+    def _authenticated_principal(self, headers: dict[str, str]) -> Principal:
+        if not self.authenticator.enabled:
+            raise HttpError(403, "persistent sessions require KNOWFLOW_AUTH_TOKENS")
+        return self._principal({}, headers)
+
+    def _management_principal(self, headers: dict[str, str]) -> Principal:
+        principal = self._principal({}, headers)
+        if self.authenticator.enabled and ADMIN_ROLE not in principal.roles:
+            raise HttpError(403, "administrator role required")
+        return principal
+
+    def _read_json(self, headers: dict[str, str], body: bytes, *, max_bytes: int = MAX_JSON_BYTES) -> dict[str, object]:
+        if len(body) > max_bytes:
             raise HttpError(413, "request body is too large")
         if body and "application/json" not in headers.get("content-type", ""):
             raise HttpError(415, "content-type must be application/json")
@@ -362,6 +430,70 @@ def _clamp_int(value: object, *, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, numeric))
 
 
+def _session_id_from_path(path: str) -> str | None:
+    prefix = "/sessions/"
+    if not path.startswith(prefix):
+        return None
+    session_id = path.removeprefix(prefix)
+    if not session_id or "/" in session_id or len(session_id) > 80:
+        return None
+    return session_id
+
+
+def _optional_session_id(value: object) -> str | None:
+    session_id = str(value or "").strip()
+    if not session_id:
+        return None
+    if len(session_id) > 80 or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for char in session_id):
+        raise HttpError(400, "invalid session id")
+    return session_id
+
+
+def _shared_session_id(path: str) -> str | None:
+    prefix = "/sessions/"
+    suffix = "/share"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return None
+    session_id = path.removeprefix(prefix).removesuffix(suffix)
+    if not session_id or "/" in session_id or len(session_id) > 80:
+        return None
+    return session_id
+
+
+def _session_payload(payload: dict[str, object]) -> dict[str, object]:
+    session_id = str(payload.get("id", "")).strip()
+    title = str(payload.get("title", "")).strip()
+    turns = payload.get("turns", [])
+    if not session_id or len(session_id) > 80 or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for char in session_id):
+        raise HttpError(400, "invalid session id")
+    if not title or len(title) > MAX_SESSION_TITLE_CHARS:
+        raise HttpError(400, "invalid session title")
+    if not isinstance(turns, list) or not turns or len(turns) > MAX_SESSION_TURNS:
+        raise HttpError(400, "invalid session turns")
+    normalized_turns = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            raise HttpError(400, "invalid session turn")
+        question = str(turn.get("question", "")).strip()
+        answer = turn.get("answer")
+        if not question or len(question) > MAX_QUESTION_CHARS or not isinstance(answer, dict):
+            raise HttpError(400, "invalid session turn")
+        normalized_turns.append({"question": question, "answer": answer})
+    return {"id": session_id, "title": title, "turns": normalized_turns, "updated_at": utc_now()}
+
+
+def _collaborators(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > 20:
+        raise HttpError(400, "invalid collaborators")
+    collaborators = []
+    for item in value:
+        user = str(item).strip()
+        if not user or len(user) > 80:
+            raise HttpError(400, "invalid collaborator")
+        collaborators.append(user)
+    return collaborators
+
+
 def _document_rows(store: KnowledgeStore) -> list[dict[str, object]]:
     chunk_counts: dict[str, int] = {}
     for chunk in store.chunks():
@@ -395,6 +527,7 @@ def create_handler(
     auth_tokens: str | None = None,
     rate_limiter: RateLimiter | None = None,
     audit_logger: AuditLogger | None = None,
+    session_store: SessionStore | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     web = WebApplication(
         store,
@@ -403,6 +536,7 @@ def create_handler(
         auth_tokens=auth_tokens,
         rate_limiter=rate_limiter,
         audit_logger=audit_logger,
+        session_store=session_store,
     )
 
     class Handler(BaseHTTPRequestHandler):

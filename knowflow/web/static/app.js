@@ -1,10 +1,17 @@
 let sessionId = Math.random().toString(36).slice(2);
 let lastAnswer = null;
-let apiToken = '';
+let apiToken = window.sessionStorage.getItem('knowflow-token') || '';
+let serverIdentityEnabled = false;
+let sessionTurns = [];
+let sessionOwner = '';
+let managementEnabled = true;
+
 const summarySlot = document.getElementById('summarySlot');
 const answerTab = document.getElementById('tab-answer');
 const citationsTab = document.getElementById('tab-citations');
 const traceSlot = document.getElementById('traceSlot');
+const inspectorSlot = document.getElementById('inspectorSlot');
+const evaluationSlot = document.getElementById('evaluationSlot');
 const modePill = document.getElementById('modePill');
 const sessionPill = document.getElementById('sessionPill');
 const statsPill = document.getElementById('stats');
@@ -21,29 +28,29 @@ const questionInput = document.getElementById('question');
 const userInput = document.getElementById('user');
 const rolesInput = document.getElementById('roles');
 const statusLive = document.getElementById('statusLive');
+const identitySummary = document.getElementById('identitySummary');
+const identityDetails = document.getElementById('identityDetails');
+const recentQuestionList = document.getElementById('recentQuestionList');
+const conversationHistory = document.getElementById('conversationHistory');
+const knowledgeNotice = document.getElementById('knowledgeNotice');
+const historyLabel = document.getElementById('historyLabel');
+const historyHint = document.getElementById('historyHint');
+const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+const currentSessionName = document.getElementById('currentSessionName');
+const currentSessionMeta = document.getElementById('currentSessionMeta');
+const shareSessionBtn = document.getElementById('shareSessionBtn');
+const navigationDrawer = document.getElementById('navigationDrawer');
+const contextDrawer = document.getElementById('contextDrawer');
+const drawerBackdrop = document.querySelector('.drawer-backdrop');
+const localSessionsKey = 'knowflow-local-sessions';
+const localIdentityKey = 'knowflow-local-identity';
 
-function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
-}
-
-function renderSession() {
-  sessionPill.textContent = `session ${sessionId.slice(0, 8)}`;
-}
-
-function setMode(value) {
-  modePill.textContent = value;
-  document.body.dataset.mode = value.replace(/\s+/g, '-').toLowerCase();
-  statusLive.textContent = value;
-  document.querySelector('.dashboard').setAttribute('aria-busy', String(['retrieving', 'uploading', 'evaluating'].includes(value)));
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
 
 function pct(value) {
-  const numeric = Number(value || 0);
-  return Math.max(0, Math.min(100, Math.round(numeric * 100)));
-}
-
-function scorePct(value) {
-  return `${pct(value)}%`;
+  return Math.max(0, Math.min(100, Math.round(Number(value || 0) * 100)));
 }
 
 function scoreLevel(value) {
@@ -51,161 +58,222 @@ function scoreLevel(value) {
 }
 
 function answerTypeLabel(value) {
-  if (value === 'grounded') return '&#x5df2;&#x5f15;&#x7528;';
-  if (value === 'clarify') return '&#x9700;&#x6f84;&#x6e05;';
-  if (value === 'refusal') return '&#x672a;&#x627e;&#x5230;';
-  return escapeHtml(value || '-');
+  return { grounded: '已引用', clarify: '需澄清', refusal: '未找到依据' }[value] || escapeHtml(value || '-');
 }
 
 function riskLabel(value) {
-  if (value === 'low') return '&#x4f4e;';
-  if (value === 'medium') return '&#x4e2d;';
-  if (value === 'high') return '&#x9ad8;';
-  return escapeHtml(value || '-');
+  return { low: '低', medium: '中', high: '高' }[value] || escapeHtml(value || '-');
 }
 
-function renderError(title, message) {
-  copyBtn.disabled = true;
-  summarySlot.innerHTML = `<div class="meta"><span class="pill" data-level="high">${escapeHtml(title)}</span></div>`;
-  answerTab.innerHTML = `<div class="citation"><strong>${escapeHtml(title)}</strong><div>${escapeHtml(message)}</div></div>`;
-  citationsTab.innerHTML = '<div class="empty">&#x672c;&#x6b21;&#x64cd;&#x4f5c;&#x672a;&#x4ea7;&#x751f;&#x5f15;&#x7528;&#x3002;</div>';
-  traceSlot.innerHTML = '<div class="empty">&#x8bf7;&#x68c0;&#x67e5;&#x672c;&#x5730;&#x670d;&#x52a1;&#x6216;&#x8bc4;&#x6d4b;&#x96c6;&#x8def;&#x5f84;&#x3002;</div>';
-  switchTab('answer');
+function renderSession() {
+  sessionPill.textContent = `会话 ${sessionId.slice(0, 8)}`;
+  const current = serverIdentityEnabled ? sessionTurns : currentLocalSession()?.turns;
+  const title = current?.[0]?.question || '知识库问答';
+  currentSessionName.textContent = title.slice(0, 28);
+  currentSessionMeta.textContent = serverIdentityEnabled
+    ? (sessionOwner && sessionOwner !== userInput.value ? '共享只读' : '团队会话')
+    : '本机会话';
 }
 
-async function apiFetch(url, options = {}, retry = true) {
-  const headers = new Headers(options.headers || {});
-  if (apiToken) headers.set('x-knowflow-token', apiToken);
-  const response = await fetch(url, { ...options, headers });
-  if (response.status === 401 && retry) {
-    const entered = window.prompt('API token');
-    if (entered) {
-      apiToken = entered;
-      return apiFetch(url, options, false);
+function setManagementEnabled(enabled) {
+  managementEnabled = enabled;
+  document.querySelectorAll('[data-view="knowledge"], [data-view="evaluation"], [data-management]').forEach(element => { element.hidden = !enabled; });
+}
+
+function updateIdentitySummary() {
+  const user = userInput.value.trim() || '当前用户';
+  const roles = rolesInput.value.trim() || '默认权限';
+  identitySummary.textContent = `${user} · ${roles}`;
+}
+
+function resizeQuestionInput() {
+  const minimum = window.matchMedia('(max-width: 480px)').matches ? 104 : 112;
+  if (!questionInput.value.trim()) {
+    questionInput.style.height = `${minimum}px`;
+    return;
+  }
+  questionInput.style.height = 'auto';
+  questionInput.style.height = `${Math.min(Math.max(questionInput.scrollHeight, minimum), 180)}px`;
+}
+
+function localSessions() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(localSessionsKey) || '[]');
+    return Array.isArray(value) ? value.filter(item => item && typeof item.id === 'string' && Array.isArray(item.turns)) : [];
+  } catch { return []; }
+}
+
+function saveLocalSessions(sessions) {
+  try { window.localStorage.setItem(localSessionsKey, JSON.stringify(sessions.slice(0, 8))); } catch { return; }
+}
+
+function formatLocalTime(value) {
+  try { return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)); } catch { return ''; }
+}
+
+function renderLocalSessions() {
+  const entries = localSessions();
+  clearHistoryBtn.hidden = entries.length === 0;
+  recentQuestionList.innerHTML = entries.length
+    ? entries.map(entry => `<button class="recent-question" type="button" data-local-session="${escapeHtml(entry.id)}"><strong>${escapeHtml(entry.title || '未命名会话')}</strong><span>${entry.turns.length} 轮 · ${escapeHtml(formatLocalTime(entry.updatedAt))}</span></button>`).join('')
+    : '<div class="empty">还没有本机记录。</div>';
+}
+
+function currentLocalSession() {
+  return localSessions().find(entry => entry.id === sessionId) || null;
+}
+
+async function saveCurrentTurn(question, answer) {
+  if (serverIdentityEnabled) {
+    sessionTurns = [...sessionTurns, { question, answer }].slice(-12);
+    if (sessionOwner && sessionOwner !== userInput.value) {
+      sessionId = Math.random().toString(36).slice(2);
+      sessionOwner = userInput.value;
     }
+    await saveServerSession();
+    renderSession();
+    return;
   }
-  return response;
+  const sessions = localSessions().filter(entry => entry.id !== sessionId);
+  const existing = currentLocalSession();
+  const turns = [...(existing?.turns || []), { question, answer }].slice(-12);
+  sessions.unshift({ id: sessionId, title: existing?.title || question.slice(0, 32), user: userInput.value.trim(), roles: rolesInput.value.trim(), updatedAt: new Date().toISOString(), turns });
+  saveLocalSessions(sessions);
+  renderLocalSessions();
+  renderSession();
 }
 
-async function parseApiResponse(response) {
-  const text = await response.text();
-  let payload = {};
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = { error: { message: text } };
-    }
+function renderConversationHistory(session) {
+  const previousTurns = (session?.turns || []).slice(0, -1);
+  conversationHistory.hidden = previousTurns.length === 0;
+  conversationHistory.innerHTML = previousTurns.map((turn, index) => `<article class="history-turn"><p class="history-question">${index + 1}. ${escapeHtml(turn.question)}</p><p class="history-answer">${escapeHtml(turn.answer?.answer || '没有可恢复的回答。')}</p></article>`).join('');
+}
+
+function restoreLocalSession(id) {
+  const session = localSessions().find(entry => entry.id === id);
+  if (!session || !session.turns.length) return;
+  sessionId = session.id;
+  sessionTurns = session.turns;
+  userInput.value = session.user || userInput.value;
+  rolesInput.value = session.roles || rolesInput.value;
+  const latestTurn = session.turns[session.turns.length - 1];
+  questionInput.value = latestTurn.question || '';
+  resizeQuestionInput();
+  lastAnswer = latestTurn.answer || null;
+  renderSession(); updateIdentitySummary(); renderConversationHistory(session); showView('workspace');
+  if (lastAnswer) { renderResult(lastAnswer); setMode(lastAnswer.answer_type || 'ready'); }
+}
+
+function loadLocalIdentity() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(localIdentityKey) || '{}');
+    if (typeof saved.user === 'string' && saved.user) userInput.value = saved.user;
+    if (typeof saved.roles === 'string' && saved.roles) rolesInput.value = saved.roles;
+  } catch { return; }
+}
+
+function saveLocalIdentity() {
+  try { window.localStorage.setItem(localIdentityKey, JSON.stringify({ user: userInput.value.trim(), roles: rolesInput.value.trim() })); } catch { return; }
+}
+
+async function loadServerIdentity() {
+  try {
+    const data = await parseApiResponse(await apiFetch('/identity'));
+    if (!data.authenticated) { setManagementEnabled(true); return false; }
+    serverIdentityEnabled = true;
+    userInput.value = data.user;
+    rolesInput.value = (data.roles || []).join(', ');
+    sessionOwner = data.user;
+    userInput.disabled = true;
+    rolesInput.disabled = true;
+    identityDetails.hidden = true;
+    updateIdentitySummary();
+    historyLabel.textContent = '团队会话';
+    historyHint.textContent = '与协作者共享的服务端记录';
+    clearHistoryBtn.hidden = true;
+    shareSessionBtn.hidden = false;
+    setManagementEnabled((data.roles || []).includes('admin'));
+    renderSession();
+    await loadServerSessions();
+    return true;
+  } catch (error) {
+    setManagementEnabled(false);
+    if (apiToken) renderError('身份连接失败', error.message || String(error));
+    return false;
   }
-  if (!response.ok) {
-    const message = payload?.error?.message || payload?.message || response.statusText || 'request failed';
-    throw new Error(message);
-  }
-  return payload;
+}
+
+async function loadServerSessions() {
+  const data = await parseApiResponse(await apiFetch('/sessions'));
+  recentQuestionList.innerHTML = (data.sessions || []).length
+    ? data.sessions.map(session => `<button class="recent-question" type="button" data-server-session="${escapeHtml(session.id)}"><strong>${escapeHtml(session.title)}</strong><span>${session.turn_count} 轮 · ${escapeHtml(formatLocalTime(session.updated_at))}${session.owner !== userInput.value ? ' · 共享给我' : ''}</span></button>`).join('')
+    : '<div class="empty">还没有团队会话。</div>';
+}
+
+async function saveServerSession() {
+  const title = (sessionTurns[0]?.question || '未命名会话').slice(0, 32);
+  const data = await parseApiResponse(await apiFetch('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: sessionId, title, turns: sessionTurns }) }));
+  sessionOwner = data.session.owner;
+  await loadServerSessions();
+}
+
+async function restoreServerSession(id) {
+  const data = await parseApiResponse(await apiFetch(`/sessions/${encodeURIComponent(id)}`));
+  const session = data.session;
+  if (!session?.turns?.length) return;
+  sessionId = session.id;
+  sessionOwner = session.owner || userInput.value;
+  sessionTurns = session.turns;
+  const latestTurn = sessionTurns[sessionTurns.length - 1];
+  questionInput.value = latestTurn.question || '';
+  resizeQuestionInput();
+  lastAnswer = latestTurn.answer || null;
+  shareSessionBtn.hidden = sessionOwner !== userInput.value;
+  renderSession(); renderConversationHistory({ turns: sessionTurns }); showView('workspace');
+  if (lastAnswer) { renderResult(lastAnswer); setMode(lastAnswer.answer_type || 'ready'); }
+}
+
+function setMode(value) {
+  const labels = { ready: '就绪', retrieving: '正在检索', uploading: '正在导入', evaluating: '正在评测', error: '需要处理', copied: '已复制', grounded: '已引用', clarify: '需澄清', refusal: '未找到依据', 'eval ready': '评测完成' };
+  modePill.textContent = labels[value] || value;
+  document.body.dataset.mode = value.replace(/\s+/g, '-').toLowerCase();
+  statusLive.textContent = labels[value] || value;
+  document.querySelector('.app-content').setAttribute('aria-busy', String(['retrieving', 'uploading', 'evaluating'].includes(value)));
 }
 
 function setBusy(isBusy) {
   askBtn.disabled = isBusy;
   evalBtn.disabled = isBusy;
-  uploadFormEl.querySelectorAll('input, button').forEach(element => {
-    element.disabled = isBusy;
+  uploadFormEl.querySelectorAll('input, button').forEach(element => { element.disabled = isBusy; });
+}
+
+function showView(name) {
+  if (!managementEnabled && ['knowledge', 'evaluation'].includes(name)) return;
+  document.querySelectorAll('.view').forEach(view => {
+    const active = view.id === `view-${name}`;
+    view.classList.toggle('active', active);
+    view.hidden = !active;
   });
+  document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === name));
+  closeDrawers();
+  if (name === 'workspace') questionInput.focus({ preventScroll: true });
 }
 
-function renderWaitingAnswer() {
-  answerTab.innerHTML = `
-    <div class="trust-grid">
-      <div class="trust-row">
-        <div class="trust-dot">1</div>
-        <div><div class="trust-title">&#x7b54;&#x6848;&#x751f;&#x6210;</div><div class="trust-copy">&#x57fa;&#x4e8e;&#x53ef;&#x89c1;&#x6587;&#x6863;&#x548c;&#x91cd;&#x6392;&#x7ed3;&#x679c;&#x7ec4;&#x7ec7;&#x7b54;&#x6848;&#x3002;</div></div>
-        <div class="trust-state">waiting</div>
-      </div>
-      <div class="trust-row">
-        <div class="trust-dot">2</div>
-        <div><div class="trust-title">&#x6765;&#x6e90;&#x5f15;&#x7528;</div><div class="trust-copy">&#x4f18;&#x5148;&#x663e;&#x793a;&#x6587;&#x6863;&#x6807;&#x9898;&#x3001;chunk &#x548c;&#x539f;&#x6587;&#x7247;&#x6bb5;&#x3002;</div></div>
-        <div class="trust-state">0</div>
-      </div>
-      <div class="trust-row">
-        <div class="trust-dot">3</div>
-        <div><div class="trust-title">&#x98ce;&#x9669;&#x68c0;&#x67e5;</div><div class="trust-copy">&#x5f31;&#x8bc1;&#x636e;&#x95ee;&#x9898;&#x4f1a;&#x89e6;&#x53d1;&#x6f84;&#x6e05;&#x6216;&#x62d2;&#x7b54;&#x3002;</div></div>
-        <div class="trust-state">guarded</div>
-      </div>
-    </div>
-  `;
+function openDrawer(name) {
+  const drawer = name === 'context' ? contextDrawer : navigationDrawer;
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  drawerBackdrop.hidden = false;
+  document.querySelectorAll(`[data-drawer="${name}"]`).forEach(button => button.setAttribute('aria-expanded', 'true'));
 }
 
-function renderLoading(message, detail) {
-  summarySlot.innerHTML = `
-    <div class="loading-card">
-      <div class="loading-head">
-        <span class="loading-spinner" aria-hidden="true"></span>
-        <div>
-          <strong>${escapeHtml(message)}</strong>
-          <div>${escapeHtml(detail || '正在处理请求')}</div>
-        </div>
-      </div>
-      <div class="loading-bars" aria-hidden="true">
-        <span></span><span></span><span></span>
-      </div>
-    </div>
-  `;
-  answerTab.innerHTML = `
-    <div class="trust-grid">
-      <div class="trust-row active">
-        <div class="trust-dot">1</div>
-        <div><div class="trust-title">权限过滤</div><div class="trust-copy">确认当前用户可见的知识范围。</div></div>
-        <div class="trust-state">running</div>
-      </div>
-      <div class="trust-row active">
-        <div class="trust-dot">2</div>
-        <div><div class="trust-title">混合检索</div><div class="trust-copy">合并关键词、向量和重排信号。</div></div>
-        <div class="trust-state">running</div>
-      </div>
-      <div class="trust-row">
-        <div class="trust-dot">3</div>
-        <div><div class="trust-title">引用校验</div><div class="trust-copy">生成回答前检查证据支撑。</div></div>
-        <div class="trust-state">queued</div>
-      </div>
-    </div>
-  `;
-  switchTab('answer');
-}
-
-
-async function refreshStats() {
-  const res = await apiFetch('/health');
-  const data = await parseApiResponse(res);
-  statsPill.textContent = `${data.stats.documents} docs / ${data.stats.chunks} chunks`;
-  metricDocs.textContent = data.stats.documents;
-  metricChunks.textContent = data.stats.chunks;
-}
-
-async function refreshDocuments() {
-  const res = await apiFetch('/documents');
-  const data = await parseApiResponse(res);
-  if (!data.documents.length) {
-    docList.innerHTML = '<div class="empty">&#x6682;&#x65e0;&#x6587;&#x6863;&#x3002;</div>';
-    return;
-  }
-  docList.innerHTML = data.documents.map(doc => `
-    <article class="doc-row">
-      <div class="doc-head">
-        <div class="doc-main">
-          <div class="doc-title">${escapeHtml(doc.title)}</div>
-          <div class="doc-tags">
-            <span class="doc-tag">${doc.chunk_count} chunks</span>
-            <span class="doc-tag">roles ${(doc.allowed_roles || []).length ? escapeHtml(doc.allowed_roles.join(', ')) : 'public'}</span>
-          </div>
-        </div>
-      </div>
-      <details class="doc-details">
-        <summary class="advanced-summary">&#x67e5;&#x770b;&#x8be6;&#x60c5;</summary>
-        <div class="doc-meta">${escapeHtml(doc.source)}</div>
-        <div class="doc-meta">users ${escapeHtml((doc.allowed_users || []).join(', ') || 'any')}</div>
-        <div class="doc-actions"><button class="danger" type="button" data-delete-doc="${escapeHtml(doc.id)}">&#x5220;&#x9664;</button></div>
-      </details>
-    </article>
-  `).join('');
+function closeDrawers() {
+  [navigationDrawer, contextDrawer].forEach(drawer => {
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+  });
+  drawerBackdrop.hidden = true;
+  document.querySelectorAll('[data-drawer]').forEach(button => button.setAttribute('aria-expanded', 'false'));
 }
 
 function switchTab(name) {
@@ -222,283 +290,245 @@ function switchTab(name) {
   });
 }
 
-function renderUploadSuccess(data) {
+async function apiFetch(url, options = {}, retry = true) {
+  const headers = new Headers(options.headers || {});
+  if (apiToken) headers.set('x-knowflow-token', apiToken);
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401 && retry) {
+    const entered = window.prompt('请输入 API token');
+    if (entered) {
+      apiToken = entered;
+      window.sessionStorage.setItem('knowflow-token', entered);
+      return apiFetch(url, options, false);
+    }
+  }
+  return response;
+}
+
+async function parseApiResponse(response) {
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try { payload = JSON.parse(text); } catch { payload = { error: { message: text } }; }
+  }
+  if (!response.ok) throw new Error(payload?.error?.message || payload?.message || response.statusText || 'request failed');
+  return payload;
+}
+
+async function refreshStats() {
+  const data = await parseApiResponse(await apiFetch('/health'));
+  statsPill.textContent = `${data.stats.documents} 份文档 / ${data.stats.chunks} 个片段`;
+  metricDocs.textContent = data.stats.documents;
+  metricChunks.textContent = data.stats.chunks;
+}
+
+async function refreshDocuments() {
+  const data = await parseApiResponse(await apiFetch('/documents'));
+  if (!data.documents.length) {
+    docList.innerHTML = '<div class="empty">资料库中还没有文档。</div>';
+    return;
+  }
+  docList.innerHTML = data.documents.map(doc => `
+    <article class="doc-row">
+      <div class="doc-title">${escapeHtml(doc.title)}</div>
+      <div class="doc-tags"><span class="doc-tag">${doc.chunk_count} 个片段</span><span class="doc-tag">${(doc.allowed_roles || []).length ? escapeHtml(doc.allowed_roles.join(', ')) : '公开角色'}</span></div>
+      <details class="doc-details"><summary class="advanced-summary">查看访问范围</summary><div class="doc-meta">来源：${escapeHtml(doc.source)}</div><div class="doc-meta">指定用户：${escapeHtml((doc.allowed_users || []).join(', ') || '所有用户')}</div><div class="doc-actions"><button class="danger" type="button" data-delete-doc="${escapeHtml(doc.id)}">删除文档</button></div></details>
+    </article>`).join('');
+}
+
+function renderInspector(data) {
+  const debug = data.retrieval_debug || [];
+  const citations = data.citations || [];
+  const strongCount = debug.filter(item => item.evidence_grade === 'strong').length;
+  const aclLevel = data.answer_type === 'refusal' ? 'danger' : (data.answer_type === 'clarify' ? 'warning' : 'ok');
+  const aclText = data.answer_type === 'refusal'
+    ? '当前身份下没有足以支撑回答的可见证据。'
+    : `访问控制已应用，检索了当前用户和角色可访问的 ${debug.length} 个候选片段。`;
+  const sources = (citations.length ? citations : debug).slice(0, 4);
+  inspectorSlot.innerHTML = `
+    <div class="acl-banner" data-level="${aclLevel}"><strong>访问边界</strong><br>${escapeHtml(aclText)}</div>
+    <section class="inspector-section"><h3>本次证据</h3><div class="inspector-summary"><div class="inspector-stat"><span>命中片段</span><strong>${debug.length}</strong></div><div class="inspector-stat"><span>强证据</span><strong>${strongCount}</strong></div><div class="inspector-stat"><span>引用来源</span><strong>${citations.length}</strong></div><div class="inspector-stat"><span>风险</span><strong>${riskLabel(data.hallucination_risk)}</strong></div></div></section>
+    <section class="inspector-section"><h3>优先来源</h3>${sources.length ? sources.map(source => `<div class="evidence-source"><strong>${escapeHtml(source.title || source.source || '未命名来源')}</strong><span>${escapeHtml(source.chunk_id || '')}${source.score !== undefined ? ` · 得分 ${escapeHtml(source.score)}` : ''}</span></div>`).join('') : '<div class="empty">没有可展示的来源。</div>'}</section>
+    <section class="inspector-section"><h3>回答状态</h3><div class="status-chip" data-level="${data.answer_type === 'grounded' ? 'low' : (data.answer_type === 'clarify' ? 'medium' : 'high')}">${answerTypeLabel(data.answer_type)} · 置信度 ${pct(data.confidence)}%</div></section>`;
+}
+
+function renderLoading(message, detail) {
+  document.body.classList.add('has-answer');
+  document.querySelector('.response-area').classList.add('has-result');
+  contextDrawer.hidden = false;
+  document.querySelector('.context-toggle').hidden = false;
+  summarySlot.innerHTML = `<div class="loading-card"><div class="loading-head"><span class="loading-spinner" aria-hidden="true"></span><div><strong>${escapeHtml(message)}</strong><div>${escapeHtml(detail)}</div></div></div><div class="loading-bars" aria-hidden="true"><span></span><span></span><span></span></div></div>`;
+  answerTab.innerHTML = '<div class="empty">正在确认权限、召回资料并校验引用。</div>';
+  inspectorSlot.innerHTML = '<div class="inspector-empty"><strong>正在构建证据链</strong><p>先按身份过滤资料，再合并检索与重排信号。</p></div>';
+  switchTab('answer');
+}
+
+function renderError(title, message) {
   copyBtn.disabled = true;
-  summarySlot.innerHTML = `
-    <div class="meta">
-      <span class="pill" data-level="low">&#x4e0a;&#x4f20;&#x6210;&#x529f;</span>
-      <span class="pill">${data.added} chunks indexed</span>
-      <span class="pill">${data.stats.documents} docs / ${data.stats.chunks} chunks</span>
-    </div>
-  `;
-  answerTab.innerHTML = `
-    <div class="citation">
-      <strong>&#x6587;&#x6863;&#x5df2;&#x52a0;&#x5165;&#x77e5;&#x8bc6;&#x5e93;</strong>
-      <div>&#x7cfb;&#x7edf;&#x5df2;&#x5b8c;&#x6210;&#x5207;&#x5206;&#x548c;&#x7d22;&#x5f15;&#xff0c;&#x53ef;&#x4ee5;&#x76f4;&#x63a5;&#x7528;&#x53f3;&#x4fa7;&#x95ee;&#x7b54;&#x9a8c;&#x8bc1;&#x68c0;&#x7d22;&#x6548;&#x679c;&#x3002;</div>
-    </div>
-  `;
-  citationsTab.innerHTML = '<div class="empty">&#x4e0a;&#x4f20;&#x64cd;&#x4f5c;&#x4e0d;&#x4ea7;&#x751f;&#x56de;&#x7b54;&#x5f15;&#x7528;&#xff0c;&#x8bf7;&#x63d0;&#x95ee;&#x540e;&#x67e5;&#x770b;&#x6765;&#x6e90;&#x3002;</div>';
-  traceSlot.innerHTML = '<div class="empty">&#x65b0;&#x6587;&#x6863;&#x5df2;&#x8fdb;&#x5165;&#x6df7;&#x5408;&#x68c0;&#x7d22;&#x5019;&#x9009;&#x96c6;&#x3002;</div>';
+  document.querySelector('.response-area').classList.add('has-result');
+  summarySlot.innerHTML = `<div class="guardrail-notice"><strong>${escapeHtml(title)}</strong><div>${escapeHtml(message)}</div></div>`;
+  answerTab.innerHTML = '<div class="empty">本次操作没有生成回答。</div>';
+  citationsTab.innerHTML = '<div class="empty">本次操作没有产生引用。</div>';
+  traceSlot.innerHTML = '<div class="empty">请检查服务状态或输入内容。</div>';
+  inspectorSlot.innerHTML = '<div class="inspector-empty"><strong>未生成证据</strong><p>当前请求没有可展示的检索上下文。</p></div>';
   switchTab('answer');
 }
 
 function renderResult(data) {
+  document.body.classList.add('has-answer');
+  document.querySelector('.response-area').classList.add('has-result');
+  contextDrawer.hidden = false;
+  document.querySelector('.context-toggle').hidden = false;
   copyBtn.disabled = false;
-  const strongCount = (data.retrieval_debug || []).filter(item => item.evidence_grade === 'strong').length;
-  const citationCount = (data.citations || []).length;
-  const retrievalCount = (data.retrieval_debug || []).length;
-  summarySlot.innerHTML = `
-    <div class="result-summary">
-      <div class="result-kicker">
-        <span>&#x672c;&#x6b21;&#x56de;&#x7b54;&#x7684;&#x4f9d;&#x636e;&#x6982;&#x89c8;</span>
-        <span>${citationCount} citations</span>
-      </div>
-      <div class="answer-metrics">
-        <div class="answer-metric" data-level="${data.answer_type === 'grounded' ? 'low' : (data.answer_type === 'clarify' ? 'medium' : 'high')}">
-          <div class="answer-metric-label">&#x56de;&#x7b54;&#x72b6;&#x6001;</div>
-          <div class="answer-metric-value">${answerTypeLabel(data.answer_type)}</div>
-        </div>
-        <div class="answer-metric" data-level="${scoreLevel(data.confidence)}">
-          <div class="answer-metric-label">&#x7f6e;&#x4fe1;&#x5ea6;</div>
-          <div class="answer-metric-value">${scorePct(data.confidence)}</div>
-        </div>
-        <div class="answer-metric" data-level="${data.hallucination_risk}">
-          <div class="answer-metric-label">&#x5e7b;&#x89c9;&#x98ce;&#x9669;</div>
-          <div class="answer-metric-value">${riskLabel(data.hallucination_risk)}</div>
-        </div>
-        <div class="answer-metric" data-level="${strongCount ? 'low' : 'medium'}">
-          <div class="answer-metric-label">&#x5f3a;&#x8bc1;&#x636e;</div>
-          <div class="answer-metric-value">${strongCount}/${retrievalCount}</div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const followUps = (data.follow_up_questions || []).length
-    ? `<div class="citation"><strong>&#x5efa;&#x8bae;&#x8ffd;&#x95ee;</strong><div class="follow-up-actions">${data.follow_up_questions.map(q => `<button class="chip follow-up-chip" type="button" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div></div>`
-    : '';
-  const evidence = data.evidence_summary
-    ? `<div class="citation"><strong>&#x8bc1;&#x636e;&#x6458;&#x8981;</strong><div>${escapeHtml(data.evidence_summary)}</div></div>`
-    : '';
-  const refusal = data.answer_type === 'refusal'
-    ? `<div class="guardrail-notice"><strong>权限或证据边界已生效</strong><div>当前身份下没有可引用的可靠依据，因此系统没有扩展回答，也没有暴露受限文档。</div></div>`
-    : '';
-  const inlineEvidence = citationCount
-    ? `<section class="evidence-list" aria-label="回答依据原文"><strong>回答依据原文</strong>${data.citations.slice(0, 2).map(c => `
-      <blockquote class="evidence-quote"><span>${escapeHtml(c.title)} · ${escapeHtml(c.chunk_id)}</span><p>${escapeHtml(c.quote)}</p></blockquote>`).join('')}</section>`
-    : '';
+  const citations = data.citations || [];
+  const debug = data.retrieval_debug || [];
+  const strongCount = debug.filter(item => item.evidence_grade === 'strong').length;
+  const level = data.answer_type === 'grounded' ? 'low' : (data.answer_type === 'clarify' ? 'medium' : 'high');
+  summarySlot.innerHTML = `<div class="answer-status"><div class="answer-status-main"><span class="status-chip" data-level="${level}">${answerTypeLabel(data.answer_type)}</span><span class="answer-status-label">${data.answer_type === 'grounded' ? '回答已由可访问资料支持' : '请结合证据边界确认回答'}</span></div><div class="answer-metrics"><span class="answer-metric"><strong>置信度</strong>${pct(data.confidence)}%</span><span class="answer-metric"><strong>风险</strong>${riskLabel(data.hallucination_risk)}</span><span class="answer-metric"><strong>引用</strong>${citations.length}</span><span class="answer-metric"><strong>强证据</strong>${strongCount}/${debug.length}</span></div></div>`;
+  const refusal = data.answer_type === 'refusal' ? '<div class="guardrail-notice"><strong>回答已受到证据和权限边界保护</strong><div>系统没有扩展未被当前身份支持的内容，也没有暴露受限资料。</div></div>' : '';
+  const inlineEvidence = citations.length ? `<section class="evidence-list"><strong>引用依据</strong>${citations.slice(0, 2).map(citation => `<blockquote class="evidence-quote"><span>${escapeHtml(citation.title)} · ${escapeHtml(citation.chunk_id)}</span><p>${escapeHtml(citation.quote)}</p></blockquote>`).join('')}</section>` : '';
+  const evidence = data.evidence_summary ? `<div class="citation"><strong>证据摘要</strong><div>${escapeHtml(data.evidence_summary)}</div></div>` : '';
+  const followUps = (data.follow_up_questions || []).length ? `<div class="citation"><strong>建议追问</strong><div class="follow-up-actions">${data.follow_up_questions.map(question => `<button class="chip" type="button" data-q="${escapeHtml(question)}">${escapeHtml(question)}</button>`).join('')}</div></div>` : '';
   answerTab.innerHTML = `${refusal}<div class="answer">${escapeHtml(data.answer)}</div>${inlineEvidence}${evidence}${followUps}`;
-
-  citationsTab.innerHTML = (data.citations || []).length
-    ? data.citations.map(c => `
-      <div class="citation">
-        <strong>${escapeHtml(c.title)}</strong>
-        <div>${escapeHtml(c.chunk_id)}</div>
-        <p>${escapeHtml(c.quote)}</p>
-      </div>`).join('')
-    : '<div class="empty">&#x6ca1;&#x6709;&#x53ef;&#x7528;&#x5f15;&#x7528;&#x3002;</div>';
-
-  traceSlot.innerHTML = (data.retrieval_debug || []).length
-    ? data.retrieval_debug.map(item => `
-      <div class="trace-row ${item.evidence_grade === 'strong' ? 'strong' : ''}">
-        <div class="trace-head">
-          <span>${escapeHtml(item.evidence_grade === 'strong' ? '强证据' : '弱证据')}</span>
-          <span>score ${item.score}</span>
-        </div>
-        <div class="trace-meta">${escapeHtml(item.source)} - ${escapeHtml(item.chunk_id)}</div>
-        <div class="trace-meta">&#x547d;&#x4e2d;&#x539f;&#x56e0;&#xff1a;${escapeHtml((item.reasons || []).join(', '))}</div>
-        <details>
-          <summary class="advanced-summary">&#x67e5;&#x770b;&#x6280;&#x672f;&#x5206;&#x6570;</summary>
-          <div class="score-bars">
-            <div class="score-line"><span>BM25</span><span class="score-track"><span class="score-fill" style="width:${pct(item.bm25)}%"></span></span><span>${pct(item.bm25)}%</span></div>
-            <div class="score-line"><span>Vector</span><span class="score-track"><span class="score-fill vector" style="width:${pct(item.vector)}%"></span></span><span>${pct(item.vector)}%</span></div>
-            <div class="score-line"><span>Rerank</span><span class="score-track"><span class="score-fill rerank" style="width:${pct(item.rerank)}%"></span></span><span>${pct(item.rerank)}%</span></div>
-          </div>
-        </details>
-      </div>`).join('')
-    : '<div class="empty">&#x8fd8;&#x6ca1;&#x6709;&#x68c0;&#x7d22;&#x8bb0;&#x5f55;&#x3002;</div>';
+  citationsTab.innerHTML = citations.length ? citations.map(citation => `<div class="citation"><strong>${escapeHtml(citation.title)}</strong><div>${escapeHtml(citation.chunk_id)}</div><p>${escapeHtml(citation.quote)}</p></div>`).join('') : '<div class="empty">没有可用引用。</div>';
+  traceSlot.innerHTML = debug.length ? debug.map(item => `<div class="trace-row ${item.evidence_grade === 'strong' ? 'strong' : ''}"><div class="trace-head"><span>${item.evidence_grade === 'strong' ? '强证据' : '弱证据'}</span><span>得分 ${escapeHtml(item.score)}</span></div><div class="trace-meta">${escapeHtml(item.source)} · ${escapeHtml(item.chunk_id)}</div><div class="trace-meta">命中原因：${escapeHtml((item.reasons || []).join(', '))}</div><details><summary class="advanced-summary">查看技术分数</summary><div class="score-bars"><div class="score-line"><span>BM25</span><span class="score-track"><span class="score-fill" style="width:${pct(item.bm25)}%"></span></span><span>${pct(item.bm25)}%</span></div><div class="score-line"><span>Vector</span><span class="score-track"><span class="score-fill vector" style="width:${pct(item.vector)}%"></span></span><span>${pct(item.vector)}%</span></div><div class="score-line"><span>Rerank</span><span class="score-track"><span class="score-fill rerank" style="width:${pct(item.rerank)}%"></span></span><span>${pct(item.rerank)}%</span></div></div></details></div>`).join('') : '<div class="empty">没有检索记录。</div>';
+  document.getElementById('welcomeMessage').hidden = true;
+  renderInspector(data);
   switchTab('answer');
+}
+
+function renderUploadSuccess(data) {
+  showView('knowledge');
+  summarySlot.innerHTML = '<div class="empty response-empty">资料库已更新，可以回到工作台开始提问。</div>';
+  inspectorSlot.innerHTML = '<div class="inspector-empty"><strong>资料库已更新</strong><p>新文档已加入下一次混合检索的候选集合。</p></div>';
+  statsPill.textContent = `${data.stats.documents} 份文档 / ${data.stats.chunks} 个片段`;
+  knowledgeNotice.hidden = false;
+  knowledgeNotice.innerHTML = `<strong>索引已完成。</strong> 已新增 ${data.added} 个可检索片段。建议回到问答工作台，用一个实际业务问题验证答案和引用。<br><button class="secondary compact" type="button" data-view="workspace">去验证资料</button>`;
 }
 
 function renderEval(data) {
-  copyBtn.disabled = true;
   const leakLevel = data.permission_leaks > 0 ? 'high' : 'low';
-  summarySlot.innerHTML = `
-    <div class="meta">
-      <span class="pill" data-level="low">&#x79bb;&#x7ebf;&#x8bc4;&#x6d4b;&#x5b8c;&#x6210;</span>
-      <span class="pill">${data.total} cases</span>
-      <span class="pill" data-level="${leakLevel}">${data.permission_leaks} leaks</span>
-    </div>
-  `;
-  answerTab.innerHTML = `
-    <div class="eval-grid">
-      <div class="eval-card"><div class="eval-label">Recall@K</div><div class="eval-value">${scorePct(data.recall_at_k)}</div><div class="eval-note">&#x9884;&#x671f;&#x6765;&#x6e90;&#x662f;&#x5426;&#x88ab;&#x627e;&#x5230;</div></div>
-      <div class="eval-card"><div class="eval-label">MRR</div><div class="eval-value">${scorePct(data.mrr)}</div><div class="eval-note">&#x6b63;&#x786e;&#x6765;&#x6e90;&#x6392;&#x540d;&#x8d8a;&#x524d;&#x8d8a;&#x597d;</div></div>
-      <div class="eval-card"><div class="eval-label">&#x5f15;&#x7528;&#x51c6;&#x786e;&#x7387;</div><div class="eval-value">${scorePct(data.citation_accuracy)}</div><div class="eval-note">&#x56de;&#x7b54;&#x662f;&#x5426;&#x5f15;&#x5230;&#x6b63;&#x786e;&#x6587;&#x6863;</div></div>
-      <div class="eval-card"><div class="eval-label">&#x5fe0;&#x5b9e;&#x5ea6;</div><div class="eval-value">${scorePct(data.faithfulness)}</div><div class="eval-note">&#x662f;&#x5426;&#x51fa;&#x73b0;&#x672a;&#x652f;&#x6491;&#x65ad;&#x8a00;</div></div>
-      <div class="eval-card"><div class="eval-label">&#x6743;&#x9650;&#x6cc4;&#x6f0f;</div><div class="eval-value">${data.permission_leaks}</div><div class="eval-note">&#x68c0;&#x7d22;&#x6216;&#x5f15;&#x7528;&#x547d;&#x4e2d;&#x7981;&#x6b62;&#x6765;&#x6e90;</div></div>
-    </div>
-    <div class="citation">
-      <strong>&#x8bc4;&#x6d4b;&#x89e3;&#x8bfb;</strong>
-      <div>&#x8fd9;&#x4e2a;&#x9762;&#x677f;&#x7528;&#x540c;&#x4e00;&#x5957; Agent &#x94fe;&#x8def;&#x56de;&#x653e;&#x79bb;&#x7ebf;&#x95ee;&#x9898;&#xff0c;&#x540c;&#x65f6;&#x68c0;&#x67e5;&#x68c0;&#x7d22;&#x8d28;&#x91cf;&#x3001;&#x5f15;&#x7528;&#x548c;&#x6743;&#x9650;&#x8fb9;&#x754c;&#x3002;</div>
-    </div>
-    ${Object.keys(data.scenario_summary || {}).length ? `<div class="scenario-list">${Object.entries(data.scenario_summary).map(([name, item]) => `<span class="pill" data-level="${item.permission_leaks ? 'high' : 'low'}">${escapeHtml(name)} ${item.passed}/${item.total}</span>`).join('')}</div>` : ''}
-  `;
-  citationsTab.innerHTML = (data.cases || []).map((item, index) => `
-    <div class="case-row">
-      <div class="case-title">${index + 1}. ${escapeHtml(item.question)}</div>
-      <div class="case-meta">
-        <span class="pill" data-level="${item.recall_hit ? 'low' : 'high'}">recall ${item.recall_hit ? 'hit' : 'miss'}</span>
-        <span class="pill" data-level="${item.permission_leak ? 'high' : 'low'}">leak ${item.permission_leak ? 'yes' : 'no'}</span>
-        <span class="pill" data-level="${scoreLevel(item.term_coverage)}">terms ${scorePct(item.term_coverage)}</span>
-        <span class="pill">rank ${item.first_rank || '-'}</span>
-      </div>
-      <div class="trace-meta">&#x68c0;&#x7d22;&#xff1a;${escapeHtml((item.retrieved_sources || []).join(', ') || '-')}</div>
-      <div class="trace-meta">&#x5f15;&#x7528;&#xff1a;${escapeHtml((item.cited_sources || []).join(', ') || '-')}</div>
-    </div>
-  `).join('');
-  traceSlot.innerHTML = `
-    <div class="status-card">
-      <div class="step-dot">E</div>
-      <div><div class="step-title">&#x79bb;&#x7ebf;&#x8bc4;&#x6d4b;&#x96c6;</div><div class="step-copy">&#x6309;&#x56fa;&#x5b9a;&#x95ee;&#x9898;&#x96c6;&#x91cd;&#x653e;&#x68c0;&#x7d22;&#x3001;&#x91cd;&#x6392;&#x3001;&#x5f15;&#x7528;&#x548c;&#x6743;&#x9650;&#x68c0;&#x67e5;&#x3002;</div></div>
-    </div>
-  `;
-  switchTab('answer');
+  const readyForRelease = data.permission_leaks === 0 && Number(data.faithfulness) >= .8 && Number(data.citation_accuracy) >= .8;
+  const recommendation = readyForRelease
+    ? '建议发布：权限边界安全，回答忠实度和引用准确率达到当前发布门槛。'
+    : '建议暂缓发布：请优先处理权限泄漏，或提升引用准确率和忠实度后再发布。';
+  evaluationSlot.classList.remove('evaluation-empty');
+  evaluationSlot.innerHTML = `<div class="eval-grid"><div class="eval-card"><div class="eval-label">Recall@K</div><div class="eval-value">${pct(data.recall_at_k)}%</div><div class="eval-note">预期来源是否被找回</div></div><div class="eval-card"><div class="eval-label">MRR</div><div class="eval-value">${pct(data.mrr)}%</div><div class="eval-note">正确来源的排序质量</div></div><div class="eval-card"><div class="eval-label">引用准确率</div><div class="eval-value">${pct(data.citation_accuracy)}%</div><div class="eval-note">来源引用是否正确</div></div><div class="eval-card"><div class="eval-label">忠实度</div><div class="eval-value">${pct(data.faithfulness)}%</div><div class="eval-note">回答是否受证据支持</div></div><div class="eval-card"><div class="eval-label">权限泄漏</div><div class="eval-value">${data.permission_leaks}</div><div class="eval-note">不应可见来源的命中数</div></div></div><div class="citation"><strong>${readyForRelease ? '可以发布' : '需要处理后再发布'}</strong><div>${recommendation} 本次共回放 ${data.total} 个案例。</div></div><div class="scenario-list">${Object.entries(data.scenario_summary || {}).map(([name, item]) => `<span class="pill" data-level="${item.permission_leaks ? 'high' : 'low'}">${escapeHtml(name)} ${item.passed}/${item.total}</span>`).join('')}</div><section class="inspector-section"><h3>案例明细</h3>${(data.cases || []).map((item, index) => `<div class="case-row"><div class="case-title">${index + 1}. ${escapeHtml(item.question)}</div><div class="case-meta"><span class="pill" data-level="${item.recall_hit ? 'low' : 'high'}">召回 ${item.recall_hit ? '命中' : '未命中'}</span><span class="pill" data-level="${item.permission_leak ? 'high' : 'low'}">权限 ${item.permission_leak ? '泄漏' : '安全'}</span><span class="pill">排名 ${item.first_rank || '-'}</span></div><div class="trace-meta">检索：${escapeHtml((item.retrieved_sources || []).join(', ') || '-')}</div></div>`).join('')}</section>`;
+  evaluationSlot.dataset.level = leakLevel;
 }
 
-uploadFormEl.addEventListener('submit', async (event) => {
+uploadFormEl.addEventListener('submit', async event => {
   event.preventDefault();
-  const form = new FormData(uploadFormEl);
-  setMode('uploading');
-  setBusy(true);
-  renderLoading('正在上传并切分文档', '解析元数据、生成 chunks 并刷新知识库');
+  setMode('uploading'); setBusy(true);
   try {
-    const res = await apiFetch('/upload', { method: 'POST', body: form });
-    const data = await parseApiResponse(res);
+    const data = await parseApiResponse(await apiFetch('/upload', { method: 'POST', body: new FormData(uploadFormEl) }));
     renderUploadSuccess(data);
+    uploadFormEl.reset();
+    await refreshStats(); await refreshDocuments();
     setMode('ready');
-    await refreshStats();
-    await refreshDocuments();
-  } catch (error) {
-    renderError('upload failed', error.message || String(error));
-    setMode('error');
-  } finally {
-    setBusy(false);
-  }
+  } catch (error) { renderError('导入失败', error.message || String(error)); setMode('error'); }
+  finally { setBusy(false); }
 });
 
 askBtn.addEventListener('click', async () => {
-  if (!questionInput.value.trim()) {
-    renderError('ask failed', '问题不能为空。');
-    setMode('error');
-    return;
-  }
-  setMode('retrieving');
-  setBusy(true);
-  renderLoading('Agent 正在检索证据', '先做权限过滤，再召回、重排和引用校验');
+  if (!questionInput.value.trim()) { renderError('无法提问', '问题不能为空。'); setMode('error'); return; }
+  showView('workspace'); setMode('retrieving'); setBusy(true);
+  renderLoading('正在检索证据', '先确认权限，再召回、重排并校验引用。');
   try {
-    const res = await apiFetch('/ask', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        question: questionInput.value,
-        user: userInput.value,
-        roles: rolesInput.value.split(',').map(x => x.trim()).filter(Boolean),
-        session_id: sessionId
-      })
-    });
-    const data = await parseApiResponse(res);
+    const data = await parseApiResponse(await apiFetch('/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: questionInput.value, user: userInput.value, roles: rolesInput.value.split(',').map(value => value.trim()).filter(Boolean), session_id: sessionId }) }));
     lastAnswer = data;
+    await saveCurrentTurn(questionInput.value.trim(), data);
+    renderConversationHistory(serverIdentityEnabled ? { turns: sessionTurns } : currentLocalSession());
     renderResult(data);
     setMode(data.answer_type || 'ready');
-  } catch (error) {
-    renderError('ask failed', error.message || String(error));
-    setMode('error');
-  } finally {
-    setBusy(false);
-  }
+  } catch (error) { renderError('提问失败', error.message || String(error)); setMode('error'); }
+  finally { setBusy(false); }
 });
 
 evalBtn.addEventListener('click', async () => {
-  setMode('evaluating');
-  setBusy(true);
-  renderLoading('正在运行离线评测', '回放评测集并计算召回、引用、忠实度和权限泄漏');
-  try {
-    const res = await apiFetch('/eval', { method: 'POST' });
-    const data = await parseApiResponse(res);
-    renderEval(data);
-    setMode('eval ready');
-  } catch (error) {
-    renderError('eval failed', error.message || String(error));
-    setMode('error');
-  } finally {
-    setBusy(false);
-  }
+  showView('evaluation'); setMode('evaluating'); setBusy(true);
+  evaluationSlot.className = 'evaluation-empty';
+  evaluationSlot.innerHTML = '<strong>正在运行评测</strong><p>回放固定问题集并检查检索、引用和权限边界。</p>';
+  try { const data = await parseApiResponse(await apiFetch('/eval', { method: 'POST' })); renderEval(data); setMode('eval ready'); }
+  catch (error) { evaluationSlot.innerHTML = `<strong>评测失败</strong><p>${escapeHtml(error.message || String(error))}</p>`; setMode('error'); }
+  finally { setBusy(false); }
 });
 
 copyBtn.addEventListener('click', async () => {
   if (!lastAnswer) return;
   await navigator.clipboard.writeText(JSON.stringify(lastAnswer, null, 2));
-  setMode('copied');
-  setTimeout(() => setMode(lastAnswer.answer_type || 'ready'), 900);
+  setMode('copied'); setTimeout(() => setMode(lastAnswer.answer_type || 'ready'), 900);
+});
+
+shareSessionBtn.addEventListener('click', async () => {
+  if (!serverIdentityEnabled || !sessionTurns.length) return;
+  const entered = window.prompt('输入协作者账号，多个账号用逗号分隔');
+  if (entered === null) return;
+  try {
+    const users = entered.split(',').map(value => value.trim()).filter(Boolean);
+    await parseApiResponse(await apiFetch(`/sessions/${encodeURIComponent(sessionId)}/share`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ users }) }));
+    setMode('已共享');
+    setTimeout(() => setMode(lastAnswer?.answer_type || 'ready'), 900);
+  } catch (error) { renderError('共享失败', error.message || String(error)); setMode('error'); }
 });
 
 newSessionBtn.addEventListener('click', () => {
-  sessionId = Math.random().toString(36).slice(2);
-  lastAnswer = null;
-  copyBtn.disabled = true;
-  renderSession();
-  summarySlot.innerHTML = '<div class="empty">&#x65b0;&#x4f1a;&#x8bdd;&#x5df2;&#x5c31;&#x7eea;&#xff0c;&#x53ef;&#x4ee5;&#x5f00;&#x59cb;&#x65b0;&#x7684;&#x8ffd;&#x95ee;&#x94fe;&#x3002;</div>';
-  renderWaitingAnswer();
-  citationsTab.innerHTML = '<div class="empty">&#x6682;&#x65e0;&#x5f15;&#x7528;&#x3002;</div>';
-  traceSlot.innerHTML = '<div class="empty">&#x8fd8;&#x6ca1;&#x6709;&#x68c0;&#x7d22;&#x8bb0;&#x5f55;&#x3002;</div>';
-  setMode('ready');
+  sessionId = Math.random().toString(36).slice(2); sessionTurns = []; sessionOwner = serverIdentityEnabled ? userInput.value : ''; lastAnswer = null; questionInput.value = ''; resizeQuestionInput(); copyBtn.disabled = true; shareSessionBtn.hidden = !serverIdentityEnabled; renderSession(); showView('workspace');
+  document.body.classList.remove('has-answer');
+  document.querySelector('.response-area').classList.remove('has-result');
+  contextDrawer.hidden = true;
+  document.querySelector('.context-toggle').hidden = true;
+  document.getElementById('welcomeMessage').hidden = false;
+  conversationHistory.hidden = true;
+  conversationHistory.innerHTML = '';
+  summarySlot.innerHTML = '<div class="empty response-empty">新会话已就绪。提出一个业务问题开始吧。</div>';
+  answerTab.innerHTML = '<div class="empty">等待问题。</div>'; citationsTab.innerHTML = '<div class="empty">暂无引用。</div>'; traceSlot.innerHTML = '<div class="empty">还没有检索记录。</div>';
+  inspectorSlot.innerHTML = '<div class="inspector-empty"><strong>等待检索</strong><p>完成提问后，这里会显示权限边界、命中来源和证据强度。</p></div>'; setMode('ready');
 });
 
-document.addEventListener('click', async (event) => {
+document.addEventListener('click', async event => {
+  const drawerButton = event.target.closest('[data-drawer]');
+  if (drawerButton) { openDrawer(drawerButton.dataset.drawer); return; }
+  if (event.target.closest('[data-close-drawer]')) { closeDrawers(); return; }
+  const viewButton = event.target.closest('[data-view]');
+  if (viewButton) { showView(viewButton.dataset.view); return; }
+  if (event.target.closest('[data-new-session]')) { newSessionBtn.click(); return; }
   const questionButton = event.target.closest('[data-q]');
-  if (questionButton) {
-    questionInput.value = questionButton.getAttribute('data-q') || '';
-    questionInput.focus();
-    return;
-  }
-  const focusTarget = event.target.closest('[data-focus]');
-  if (focusTarget) {
-    const target = document.querySelector(focusTarget.getAttribute('data-focus'));
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
+  if (questionButton) { questionInput.value = questionButton.getAttribute('data-q') || ''; resizeQuestionInput(); showView('workspace'); questionInput.focus(); return; }
+  const localSessionButton = event.target.closest('[data-local-session]');
+  if (localSessionButton) { restoreLocalSession(localSessionButton.getAttribute('data-local-session') || ''); return; }
+  const serverSessionButton = event.target.closest('[data-server-session]');
+  if (serverSessionButton) { await restoreServerSession(serverSessionButton.getAttribute('data-server-session') || ''); return; }
+  if (event.target.closest('[data-clear-history]')) {
+    if (serverIdentityEnabled) return;
+    window.localStorage.removeItem(localSessionsKey); renderLocalSessions(); return;
   }
   const tab = event.target.closest('[data-tab]');
-  if (tab) {
-    switchTab(tab.dataset.tab);
-    return;
-  }
+  if (tab) { switchTab(tab.dataset.tab); return; }
   const deleteButton = event.target.closest('[data-delete-doc]');
   if (deleteButton) {
-    const documentId = deleteButton.getAttribute('data-delete-doc');
-    if (!confirm('\\u5220\\u9664\\u8fd9\\u4efd\\u6587\\u6863\\u53ca\\u5176\\u6240\\u6709 chunks\\uff1f')) return;
+    if (!confirm('删除这份文档及其所有片段？')) return;
     deleteButton.disabled = true;
-    try {
-      const response = await apiFetch(`/documents?id=${encodeURIComponent(documentId)}`, { method: 'DELETE' });
-      await parseApiResponse(response);
-      await refreshStats();
-      await refreshDocuments();
-      setMode('ready');
-    } catch (error) {
-      renderError('delete failed', error.message || String(error));
-      setMode('error');
-    }
+    try { await parseApiResponse(await apiFetch(`/documents?id=${encodeURIComponent(deleteButton.dataset.deleteDoc)}`, { method: 'DELETE' })); await refreshStats(); await refreshDocuments(); setMode('ready'); }
+    catch (error) { renderError('删除失败', error.message || String(error)); setMode('error'); }
   }
 });
 
 document.addEventListener('keydown', event => {
-  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !askBtn.disabled) {
-    askBtn.click();
-  }
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !askBtn.disabled) askBtn.click();
+  if (event.key === 'Escape') closeDrawers();
 });
 
-refreshDocsBtn.addEventListener('click', refreshDocuments);
-renderSession();
-setMode('ready');
-refreshStats().catch(error => renderError('health failed', error.message || String(error)));
-refreshDocuments().catch(error => renderError('documents failed', error.message || String(error)));
+refreshDocsBtn.addEventListener('click', () => refreshDocuments().catch(error => renderError('加载文档失败', error.message || String(error))));
+userInput.addEventListener('input', () => { updateIdentitySummary(); saveLocalIdentity(); });
+rolesInput.addEventListener('input', () => { updateIdentitySummary(); saveLocalIdentity(); });
+questionInput.addEventListener('input', resizeQuestionInput);
+async function initializeApp() {
+  loadLocalIdentity(); renderSession(); setMode('ready');
+  updateIdentitySummary(); resizeQuestionInput(); renderLocalSessions();
+  await loadServerIdentity();
+  refreshStats().catch(error => renderError('健康检查失败', error.message || String(error)));
+  if (managementEnabled) refreshDocuments().catch(error => renderError('加载文档失败', error.message || String(error)));
+}
+
+initializeApp();

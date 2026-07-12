@@ -9,7 +9,7 @@ Required for shared deployments:
 ```text
 KNOWFLOW_STORE_BACKEND=sqlite
 KNOWFLOW_STORE=data/knowflow.db
-KNOWFLOW_AUTH_TOKENS=sales-token:alice:sales;security-token:ciso:security
+KNOWFLOW_AUTH_TOKENS=<sales-token>:alice:sales;<security-token>:ciso:security;<admin-token>:admin:admin
 KNOWFLOW_AUDIT_LOG=data/audit.jsonl
 ```
 
@@ -30,10 +30,11 @@ Do not commit real `.env` files. Use a secret manager or runtime environment var
 
 ```powershell
 copy .env.example .env
+# Edit .env and set unique, secret token values before continuing.
 docker compose up --build
 ```
 
-The service listens on `http://127.0.0.1:8765` and stores SQLite/audit data in the `knowflow-data` volume mounted at `/app/data`.
+Compose binds the service to `http://127.0.0.1:8765` and stores knowledge, session, and audit data in the `knowflow-data` volume mounted at `/app/data`. It refuses to start until `KNOWFLOW_AUTH_TOKENS` is set in `.env`.
 
 ## WSGI
 
@@ -43,7 +44,7 @@ For non-container deployments:
 KNOWFLOW_STORE_BACKEND=sqlite \
 KNOWFLOW_STORE=data/knowflow.db \
 KNOWFLOW_AUDIT_LOG=data/audit.jsonl \
-KNOWFLOW_AUTH_TOKENS="sales-token:alice:sales;security-token:ciso:security" \
+KNOWFLOW_AUTH_TOKENS="<sales-token>:alice:sales;<security-token>:ciso:security;<admin-token>:admin:admin" \
 gunicorn knowflow.wsgi:application --bind 0.0.0.0:8765 --workers 2
 ```
 

@@ -1,201 +1,121 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="data:," />
-  <title>KnowFlow RAG Agent</title>
-  <link rel="stylesheet" href="/static/app.css" />
+  <title>KnowFlow</title>
+  <link rel="stylesheet" href="/static/app.css?v=20260712-7" />
 </head>
 <body>
-  <a class="skip-link" href="#question">&#x8df3;&#x5230;&#x63d0;&#x95ee;&#x8f93;&#x5165;</a>
-  <main>
-    <header class="topbar">
-      <div class="brand-block">
-        <div class="product-mark">K</div>
-        <div class="brand-copy">
-          <div class="brand-kicker">&#x4f01;&#x4e1a;&#x77e5;&#x8bc6;&#x5e93; RAG &#x5de5;&#x4f5c;&#x53f0;</div>
-          <h1>KnowFlow RAG Agent</h1>
-          <p class="subtitle">&#x9762;&#x5411;&#x4e1a;&#x52a1;&#x4f7f;&#x7528;&#x8005;&#x7684;&#x77e5;&#x8bc6;&#x95ee;&#x7b54;&#xff1a;&#x53ef;&#x8ffd;&#x6eaf;&#x3001;&#x53ef;&#x8bc4;&#x6d4b;&#x3001;&#x53ef;&#x63a7;&#x6743;&#x9650;&#x3002;</p>
-        </div>
-      </div>
-      <div class="top-actions">
-        <span class="pill" id="stats">loading</span>
-        <span class="pill" id="sessionPill">session ...</span>
-      </div>
+  <a class="skip-link" href="#question">跳到提问输入</a>
+  <div class="app-shell">
+    <header class="app-header">
+      <button class="icon-button mobile-only" type="button" data-drawer="navigation" aria-label="打开导航" aria-controls="navigationDrawer" aria-expanded="false">☰</button>
+      <a class="wordmark" href="/" aria-label="KnowFlow 主页"><span class="wordmark-mark">K</span><span>KnowFlow</span></a>
+      <div class="header-spacer"></div>
+      <span class="status-dot" id="modePill">就绪</span>
     </header>
-    <div class="sr-only" id="statusLive" role="status" aria-live="polite">ready</div>
 
-    <div class="dashboard">
-      <aside class="column left-column">
-        <section class="column-header">
-          <div class="column-title">
-            <h2>&#x77e5;&#x8bc6;&#x5e93;</h2>
-            <div class="mini-stats">
-              <span class="mini-stat"><strong id="metricDocs">0</strong> docs</span>
-              <span class="mini-stat"><strong id="metricChunks">0</strong> chunks</span>
-            </div>
-          </div>
-          <div class="column-caption">&#x6587;&#x6863;&#x6765;&#x6e90;&#x3001;&#x6743;&#x9650;&#x548c;&#x8bc4;&#x6d4b;&#x7edf;&#x4e00;&#x7ba1;&#x7406;&#x3002;</div>
-        </section>
+    <aside class="drawer" id="navigationDrawer" aria-label="移动端导航" aria-hidden="true">
+      <div class="drawer-header"><strong>KnowFlow</strong><button class="icon-button" type="button" data-close-drawer aria-label="关闭导航">×</button></div>
+      <nav class="drawer-nav" aria-label="移动端主导航">
+        <button class="nav-item active" type="button" data-view="workspace">问答工作台</button><button class="nav-item" type="button" data-new-session>新建会话</button>
+        <span class="drawer-menu-label" data-management>管理</span><button class="nav-item" type="button" data-view="knowledge">资料库</button><button class="nav-item" type="button" data-view="evaluation">质量评测</button>
+      </nav>
+      <div class="drawer-session"><span class="section-label">当前会话</span><strong>知识库问答</strong><span id="sessionPill">session ...</span></div>
+    </aside>
+    <div class="drawer-backdrop" data-close-drawer hidden></div>
 
-        <section class="panel" id="ingestPanel">
-          <details class="foldout">
-            <summary>&#x4e0a;&#x4f20;&#x6587;&#x6863;</summary>
-            <div class="foldout-body">
-              <form id="uploadForm">
-                <label for="uploadFile">&#x9009;&#x62e9;&#x6587;&#x6863;</label>
-                <input id="uploadFile" type="file" name="file" accept=".txt,.md,.csv,.json" required />
-                <label for="uploadRoles">&#x53ef;&#x89c1;&#x89d2;&#x8272;</label>
-                <input id="uploadRoles" name="roles" placeholder="sales,legal" autocomplete="off" />
-                <label for="uploadUsers">&#x53ef;&#x89c1;&#x7528;&#x6237;</label>
-                <input id="uploadUsers" name="users" placeholder="alice,bob" autocomplete="off" />
-                <button class="secondary" type="submit">&#x4e0a;&#x4f20;&#x5e76;&#x5207;&#x5206;</button>
-              </form>
-            </div>
-          </details>
-
-          <details class="foldout">
-            <summary>&#x68c0;&#x7d22;&#x8d28;&#x91cf;&#x8bc4;&#x6d4b;</summary>
-            <div class="foldout-body">
-              <button class="secondary" id="evalBtn" type="button">&#x8fd0;&#x884c;&#x8bc4;&#x6d4b;&#x96c6;</button>
-              <div class="hint">&#x67e5;&#x770b; recall&#x3001;MRR&#x3001;&#x5f15;&#x7528;&#x6b63;&#x786e;&#x7387;&#x548c;&#x6743;&#x9650;&#x6cc4;&#x6f0f;&#x3002;</div>
-            </div>
-          </details>
-        </section>
-
-        <section class="panel">
-          <div class="section-title">
-            <h2>&#x6587;&#x6863;</h2>
-            <button class="ghost" id="refreshDocsBtn" type="button">&#x5237;&#x65b0;</button>
-          </div>
-          <div class="hint">&#x9ed8;&#x8ba4;&#x53ea;&#x663e;&#x793a;&#x5173;&#x952e;&#x4fe1;&#x606f;&#xff0c;&#x8be6;&#x60c5;&#x53ef;&#x5c55;&#x5f00;&#x3002;</div>
-          <div id="docList" class="doc-list">
-            <div class="empty">&#x6b63;&#x5728;&#x52a0;&#x8f7d;&#x6587;&#x6863;...</div>
-          </div>
-        </section>
+    <main class="app-content">
+      <aside class="desktop-sidebar" aria-label="工作区目录">
+        <a class="sidebar-wordmark" href="/" aria-label="KnowFlow 主页"><span class="wordmark-mark">K</span><span>KnowFlow</span></a>
+        <button class="new-session-button" id="newSessionBtn" type="button"><span>+</span> 新建会话</button>
+        <nav class="sidebar-nav" aria-label="工作区导航">
+          <button class="sidebar-link active" type="button" data-view="workspace"><span>问</span> 问答工作台</button>
+          <span class="sidebar-label" data-management>管理</span>
+          <button class="sidebar-link" type="button" data-view="knowledge"><span>库</span> 资料库</button>
+          <button class="sidebar-link" type="button" data-view="evaluation"><span>评</span> 质量评测</button>
+        </nav>
+        <section class="sidebar-current-session"><span class="sidebar-label">当前会话</span><div class="current-session"><span class="current-session-marker" aria-hidden="true"></span><div class="current-session-copy"><strong id="currentSessionName">知识库问答</strong><span id="currentSessionMeta">本机会话</span></div></div></section>
+        <section class="sidebar-history"><div class="sidebar-history-heading"><span class="sidebar-label" id="historyLabel">本机历史</span><button id="clearHistoryBtn" type="button" data-clear-history>清空</button></div><span class="history-hint" id="historyHint">仅保存在此浏览器</span><div id="recentQuestionList" class="recent-question-list"><div class="empty">还没有本机记录。</div></div></section>
+        <footer class="app-footer"><span class="presence"></span><span id="stats">正在连接知识库...</span></footer>
       </aside>
+      <div class="view-stack">
+      <section class="view active" id="view-workspace" aria-labelledby="workspaceTitle">
+        <div class="workspace-grid">
+          <section class="conversation-column">
+            <header class="view-header">
+              <div><p class="eyebrow">可信知识问答</p><h1 id="workspaceTitle">今天想了解什么？</h1></div>
+              <div class="workspace-actions"><button class="secondary compact" id="shareSessionBtn" type="button" hidden>共享会话</button><button class="context-toggle" type="button" data-drawer="context" aria-controls="contextDrawer" aria-expanded="false" hidden>查看依据</button></div>
+            </header>
 
-      <section class="column center-column">
-        <section class="column-header">
-          <div class="column-title">
-            <h2>&#x77e5;&#x8bc6;&#x95ee;&#x7b54;</h2>
-            <div class="question-actions">
-              <button class="ghost" id="newSessionBtn" type="button">&#x65b0;&#x4f1a;&#x8bdd;</button>
-              <span class="mini-stat" id="modePill">ready</span>
-            </div>
-          </div>
-          <div class="column-caption">&#x8f93;&#x5165;&#x4e1a;&#x52a1;&#x95ee;&#x9898;&#xff0c;Agent &#x4f1a;&#x6309;&#x6743;&#x9650;&#x68c0;&#x7d22;&#x5e76;&#x7ed9;&#x51fa;&#x5f15;&#x7528;&#x3002;</div>
-        </section>
+            <div class="conversation-scroll">
+              <div class="welcome-message" id="welcomeMessage">
+                <div class="assistant-avatar">K</div>
+                <div class="message-copy">
+                  <p>在可访问的资料中查找答案，并附上依据。</p>
+                  <div class="quick-grid">
+                    <button class="chip" type="button" data-q="销售合同审批需要哪些材料？"><span class="chip-topic">合同</span>销售审批</button>
+                    <button class="chip" type="button" data-q="超过 10000 元的费用报销由谁审批？"><span class="chip-topic">费用</span>报销审批</button>
+                    <button class="chip" type="button" data-q="P0 故障的响应时间和恢复目标是什么？"><span class="chip-topic">服务</span>P0 SLA</button>
+                  </div>
+                </div>
+              </div>
 
-        <section class="panel question-card">
-          <div class="workflow-strip" aria-label="RAG workflow">
-            <div class="workflow-step"><strong>ACL</strong><span>&#x5148;&#x6309;&#x8eab;&#x4efd;&#x8fc7;&#x6ee4;</span></div>
-            <div class="workflow-step"><strong>Hybrid</strong><span>BM25 + vector</span></div>
-            <div class="workflow-step"><strong>Rerank</strong><span>&#x5f15;&#x7528;&#x524d;&#x91cd;&#x6392;</span></div>
-          </div>
-          <div class="identity-bar">
-            <div>
-              <div class="identity-title">&#x5f53;&#x524d;&#x63d0;&#x95ee;&#x8eab;&#x4efd;</div>
-              <div class="identity-copy">&#x7528;&#x4e8e;&#x6743;&#x9650;&#x8fc7;&#x6ee4;&#xff0c;&#x5f71;&#x54cd;&#x53ef;&#x68c0;&#x7d22;&#x7684;&#x6587;&#x6863;&#x3002;</div>
+              <div id="conversationHistory" class="conversation-history" hidden></div>
+
+              <section class="response-area" aria-live="polite">
+                <div id="summarySlot"><div class="empty response-empty">提出一个业务问题，回答和引用会显示在这里。</div></div>
+                <div class="response-tabs">
+                  <div class="tabs" role="tablist" aria-label="回答详情">
+                    <button class="tab active" id="tabButton-answer" type="button" data-tab="answer" role="tab" aria-selected="true" aria-controls="tab-answer">回答</button>
+                    <button class="tab" id="tabButton-citations" type="button" data-tab="citations" role="tab" aria-selected="false" aria-controls="tab-citations" tabindex="-1">查看依据</button>
+                    <button class="tab" id="tabButton-trace" type="button" data-tab="trace" role="tab" aria-selected="false" aria-controls="tab-trace" tabindex="-1">检索细节</button>
+                  </div>
+                  <button class="copy-button" id="copyBtn" type="button" disabled>复制结果</button>
+                </div>
+                <div class="tab-panel active" id="tab-answer" role="tabpanel" aria-labelledby="tabButton-answer"><div class="empty">等待问题。</div></div>
+                <div class="tab-panel" id="tab-citations" role="tabpanel" aria-labelledby="tabButton-citations" hidden><div class="empty">暂无引用。</div></div>
+                <div class="tab-panel" id="tab-trace" role="tabpanel" aria-labelledby="tabButton-trace" hidden><div id="traceSlot" class="trace-list"><div class="empty">还没有检索记录。</div></div></div>
+              </section>
             </div>
-            <div class="identity-fields">
-              <label for="user"><span>&#x7528;&#x6237;</span><input id="user" value="alice" autocomplete="username" /></label>
-              <label for="roles"><span>&#x89d2;&#x8272;</span><input id="roles" value="sales" autocomplete="off" /></label>
-            </div>
-          </div>
-          <div class="composer">
-            <div>
-              <label class="sr-only" for="question">&#x4e1a;&#x52a1;&#x95ee;&#x9898;</label>
-              <textarea id="question" aria-describedby="questionHelp">&#x9500;&#x552e;&#x5408;&#x540c;&#x5ba1;&#x6279;&#x9700;&#x8981;&#x54ea;&#x4e9b;&#x6750;&#x6599;&#xff1f;</textarea>
-              <div class="hint" id="questionHelp">Ctrl+Enter &#x53ef;&#x5feb;&#x901f;&#x63d0;&#x95ee;&#x3002;</div>
-              <div class="quick-grid">
-                <button class="chip" type="button" data-q="&#x9500;&#x552e;&#x5408;&#x540c;&#x5ba1;&#x6279;&#x9700;&#x8981;&#x54ea;&#x4e9b;&#x6750;&#x6599;&#xff1f;">&#x9500;&#x552e;&#x5408;&#x540c;</button>
-                <button class="chip" type="button" data-q="&#x8d85;&#x8fc7; 10000 &#x5143;&#x7684;&#x8d39;&#x7528;&#x62a5;&#x9500;&#x7531;&#x8c01;&#x5ba1;&#x6279;&#xff1f;">&#x62a5;&#x9500;&#x5ba1;&#x6279;</button>
-                <button class="chip" type="button" data-q="P0 &#x6545;&#x969c;&#x7684;&#x54cd;&#x5e94;&#x65f6;&#x95f4;&#x548c;&#x6062;&#x590d;&#x76ee;&#x6807;&#x662f;&#x4ec0;&#x4e48;&#xff1f;">SLA</button>
-                <button class="chip" type="button" data-q="&#x5ba2;&#x6237;&#x654f;&#x611f;&#x6570;&#x636e;&#x7684;&#x4e34;&#x65f6;&#x6388;&#x6743;&#x9700;&#x8981;&#x8bb0;&#x5f55;&#x54ea;&#x4e9b;&#x4fe1;&#x606f;&#xff1f;">&#x6743;&#x9650;</button>
+
+            <div class="composer-wrap">
+              <div class="composer">
+                <label class="sr-only" for="question">业务问题</label>
+                <textarea id="question" aria-describedby="questionHelp" placeholder="询问知识库中的内容..."></textarea>
+                <div class="composer-footer"><div class="composer-meta"><span class="identity-label sr-only" id="identitySummary">alice · sales</span><details class="identity-details" id="identityDetails"><summary>身份</summary><div class="identity-fields"><label for="user"><span>用户</span><input id="user" value="alice" autocomplete="username" /></label><label for="roles"><span>角色</span><input id="roles" value="sales" autocomplete="off" /></label></div></details><span class="hint" id="questionHelp">Ctrl + Enter</span></div><button class="primary send-button" id="askBtn" type="button" aria-label="发送问题" title="发送问题">↑</button></div>
               </div>
             </div>
-            <div class="composer-actions">
-              <button class="primary" id="askBtn" type="button">&#x63d0;&#x95ee;</button>
-              <button class="secondary" id="copyBtn" type="button" disabled>&#x590d;&#x5236;&#x7ed3;&#x679c;</button>
+          </section>
+
+          <aside class="evidence-inspector" id="contextDrawer" aria-label="回答依据" hidden>
+            <div class="inspector-header"><div><p class="eyebrow">Evidence</p><h2>证据上下文</h2></div><div class="inspector-actions"><span class="mini-stat">ACL</span><button class="icon-button mobile-only" type="button" data-close-drawer aria-label="关闭证据上下文">×</button></div></div>
+            <div id="inspectorSlot" class="inspector-content">
+              <div class="inspector-empty"><strong>回答会附上依据</strong><p>提问后自动展示资料来源和可信度。</p></div>
             </div>
-          </div>
-        </section>
+          </aside>
+        </div>
       </section>
 
-      <section class="column right-column">
-        <section class="column-header">
-          <div class="column-title">
-            <h2>&#x7b54;&#x6848;&#x4e0e;&#x4f9d;&#x636e;</h2>
-            <span class="mini-stat"><strong>ACL</strong> on</span>
-          </div>
-          <div class="column-caption">&#x7b54;&#x6848;&#x3001;&#x5f15;&#x7528;&#x6765;&#x6e90;&#x3001;&#x68c0;&#x7d22;&#x8f68;&#x8ff9;&#x548c;&#x98ce;&#x9669;&#x4fe1;&#x53f7;&#x3002;</div>
-        </section>
-
-        <section class="panel result-panel">
-          <div id="summarySlot">
-            <div class="empty">
-              <strong>&#x5148;&#x4ece;&#x4e00;&#x4e2a;&#x4e1a;&#x52a1;&#x95ee;&#x9898;&#x5f00;&#x59cb;</strong>
-              <div class="hint">&#x7b54;&#x6848;&#x3001;&#x5f15;&#x7528;&#x548c;&#x68c0;&#x7d22;&#x8bc1;&#x636e;&#x4f1a;&#x5728;&#x8fd9;&#x91cc;&#x540c;&#x6b65;&#x5448;&#x73b0;&#x3002;</div>
-              <div class="empty-actions">
-                <button class="chip" type="button" data-q="&#x9500;&#x552e;&#x5408;&#x540c;&#x5ba1;&#x6279;&#x9700;&#x8981;&#x54ea;&#x4e9b;&#x6750;&#x6599;&#xff1f;">&#x95ee;&#x5408;&#x540c;&#x6750;&#x6599;</button>
-                <button class="chip" type="button" data-q="&#x8d85;&#x8fc7; 10000 &#x5143;&#x7684;&#x8d39;&#x7528;&#x62a5;&#x9500;&#x7531;&#x8c01;&#x5ba1;&#x6279;&#xff1f;">&#x95ee;&#x62a5;&#x9500;&#x8d1f;&#x8d23;&#x4eba;</button>
-                <button class="chip" type="button" data-q="P0 &#x6545;&#x969c;&#x7684;&#x54cd;&#x5e94;&#x65f6;&#x95f4;&#x548c;&#x6062;&#x590d;&#x76ee;&#x6807;&#x662f;&#x4ec0;&#x4e48;&#xff1f;">&#x95ee; SLA</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="tabs" role="tablist" aria-label="Answer details">
-            <button class="tab active" id="tabButton-answer" type="button" data-tab="answer" role="tab" aria-selected="true" aria-controls="tab-answer">&#x56de;&#x7b54;</button>
-            <button class="tab" id="tabButton-citations" type="button" data-tab="citations" role="tab" aria-selected="false" aria-controls="tab-citations" tabindex="-1">&#x5f15;&#x7528;</button>
-            <button class="tab" id="tabButton-trace" type="button" data-tab="trace" role="tab" aria-selected="false" aria-controls="tab-trace" tabindex="-1">Trace</button>
-          </div>
-          <div class="tab-panel active" id="tab-answer" role="tabpanel" aria-labelledby="tabButton-answer">
-            <div class="trust-grid">
-              <div class="trust-row">
-                <div class="trust-dot">1</div>
-                <div><div class="trust-title">&#x7b54;&#x6848;&#x751f;&#x6210;</div><div class="trust-copy">&#x57fa;&#x4e8e;&#x53ef;&#x89c1;&#x6587;&#x6863;&#x548c;&#x91cd;&#x6392;&#x7ed3;&#x679c;&#x7ec4;&#x7ec7;&#x7b54;&#x6848;&#x3002;</div></div>
-                <div class="trust-state">waiting</div>
-              </div>
-              <div class="trust-row">
-                <div class="trust-dot">2</div>
-                <div><div class="trust-title">&#x6765;&#x6e90;&#x5f15;&#x7528;</div><div class="trust-copy">&#x4f18;&#x5148;&#x663e;&#x793a;&#x6587;&#x6863;&#x6807;&#x9898;&#x3001;chunk &#x548c;&#x539f;&#x6587;&#x7247;&#x6bb5;&#x3002;</div></div>
-                <div class="trust-state">0</div>
-              </div>
-              <div class="trust-row">
-                <div class="trust-dot">3</div>
-                <div><div class="trust-title">&#x98ce;&#x9669;&#x68c0;&#x67e5;</div><div class="trust-copy">&#x5f31;&#x8bc1;&#x636e;&#x95ee;&#x9898;&#x4f1a;&#x89e6;&#x53d1;&#x6f84;&#x6e05;&#x6216;&#x62d2;&#x7b54;&#x3002;</div></div>
-                <div class="trust-state">guarded</div>
-              </div>
-            </div>
-          </div>
-          <div class="tab-panel" id="tab-citations" role="tabpanel" aria-labelledby="tabButton-citations" hidden>
-            <div class="empty">&#x6682;&#x65e0;&#x5f15;&#x7528;&#x3002;</div>
-          </div>
-          <div class="tab-panel" id="tab-trace" role="tabpanel" aria-labelledby="tabButton-trace" hidden>
-            <div class="status-list" id="guardrailPanel">
-              <div class="status-card">
-                <div class="step-dot">1</div>
-                <div><div class="step-title">&#x6743;&#x9650;&#x8fc7;&#x6ee4;</div><div class="step-copy">&#x5148;&#x6309;&#x7528;&#x6237;&#x548c;&#x89d2;&#x8272;&#x8fc7;&#x6ee4;&#x6587;&#x6863;&#x3002;</div></div>
-              </div>
-              <div class="status-card">
-                <div class="step-dot">2</div>
-                <div><div class="step-title">&#x6df7;&#x5408;&#x68c0;&#x7d22;</div><div class="step-copy">&#x7efc;&#x5408; BM25 &#x548c;&#x5411;&#x91cf;&#x5f0f;&#x5206;&#x6570;&#x3002;</div></div>
-              </div>
-              <div class="status-card">
-                <div class="step-dot">3</div>
-                <div><div class="step-title">&#x5f15;&#x7528;&#x6821;&#x9a8c;</div><div class="step-copy">&#x5f31;&#x8bc1;&#x636e;&#x62d2;&#x7b54;&#xff0c;&#x5f3a;&#x8bc1;&#x636e;&#x5f15;&#x7528;&#x3002;</div></div>
-              </div>
-            </div>
-            <div id="traceSlot" class="trace-list">
-              <div class="empty">&#x8fd8;&#x6ca1;&#x6709;&#x68c0;&#x7d22;&#x8bb0;&#x5f55;&#x3002;</div>
-            </div>
-          </div>
-        </section>
+      <section class="view management-view" id="view-knowledge" aria-labelledby="knowledgeTitle" hidden>
+        <header class="view-header"><div><p class="eyebrow">管理员工作区</p><h1 id="knowledgeTitle">知识库管理</h1><p class="view-description">管理资料与访问范围。</p></div><div class="header-metrics"><span><strong id="metricDocs">0</strong> 文档</span><span><strong id="metricChunks">0</strong> 片段</span></div></header>
+        <div class="management-grid">
+          <section class="management-section"><div class="section-heading"><div><h2>资料库</h2><p>仅管理员可管理内容和访问范围。</p></div><button class="secondary compact" id="refreshDocsBtn" type="button">刷新列表</button></div><div id="docList" class="doc-list"><div class="empty">正在加载文档...</div></div></section>
+          <section class="management-section upload-section"><div class="section-heading"><div><h2>导入资料</h2><p>支持 UTF-8 的 txt、md、csv、json 文件。</p></div></div><div id="knowledgeNotice" class="management-notice" hidden></div><form id="uploadForm"><label for="uploadFile">选择文件</label><input id="uploadFile" type="file" name="file" accept=".txt,.md,.csv,.json" required /><label for="uploadRoles">可见角色</label><input id="uploadRoles" name="roles" placeholder="sales, legal" autocomplete="off" /><label for="uploadUsers">可见用户</label><input id="uploadUsers" name="users" placeholder="alice, bob" autocomplete="off" /><button class="primary full-width" type="submit">上传并建立索引</button></form></section>
+        </div>
       </section>
-    </div>
-  </main>
-<script src="/static/app.js"></script>
+
+      <section class="view evaluation-view" id="view-evaluation" aria-labelledby="evaluationTitle" hidden>
+        <header class="view-header"><div><p class="eyebrow">管理员工作区</p><h1 id="evaluationTitle">质量评测</h1><p class="view-description">发布前检查答案质量与权限边界。</p></div><button class="primary" id="evalBtn" type="button">运行离线评测</button></header>
+        <div id="evaluationSlot" class="evaluation-empty"><strong>尚未运行评测</strong><p>评测结果会展示 Recall、MRR、引用准确率、忠实度和权限泄漏。</p></div>
+      </section>
+      </div>
+    </main>
+
+  </div>
+  <div class="sr-only" id="statusLive" role="status" aria-live="polite">就绪</div>
+  <script src="/static/app.js?v=20260712-7"></script>
 </body>
 </html>

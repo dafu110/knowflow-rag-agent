@@ -11,7 +11,8 @@ from knowflow.audit import AuditLogger
 from knowflow.chunking import load_documents_from_path
 from knowflow.evaluation import compare_retrieval_strategies, evaluate
 from knowflow.models import Principal
-from knowflow.server import HttpError, RateLimiter, create_handler, _safe_eval_path, _safe_upload_filename
+from knowflow.server import HttpError, RateLimiter, WebApplication, create_handler, _safe_eval_path, _safe_upload_filename
+from knowflow.session_store import SessionStore
 from knowflow.sqlite_store import SQLiteKnowledgeStore
 from knowflow.store import KnowledgeStore
 from knowflow.providers import ReliableProvider
@@ -266,6 +267,108 @@ class RagAgentTest(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertTrue(payload["citations"])
 
+    def test_authenticated_session_sharing_enforces_owner_updates(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = KnowledgeStore(Path(tmp.name) / "store")
+        sessions = SessionStore(Path(tmp.name) / "sessions.db")
+        handler = create_handler(
+            store,
+            auth_tokens="sales-token:alice:sales;security-token:ciso:security",
+            session_store=sessions,
+            rate_limiter=RateLimiter(max_requests=100, window_seconds=1),
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        body = json.dumps(
+            {
+                "id": "contract-review",
+                "title": "Contract review",
+                "turns": [{"question": "What is required?", "answer": {"answer": "A contract"}}],
+            }
+        ).encode("utf-8")
+        port = server.server_address[1]
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("POST", "/sessions", body=body, headers={"content-type": "application/json", "x-knowflow-token": "sales-token"})
+        self.assertEqual(connection.getresponse().status, 200)
+        connection.close()
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/sessions", headers={"x-knowflow-token": "security-token"})
+        self.assertEqual(json.loads(connection.getresponse().read())["sessions"], [])
+        connection.close()
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("POST", "/sessions/contract-review/share", body=b'{"users":["ciso"]}', headers={"content-type": "application/json", "x-knowflow-token": "sales-token"})
+        self.assertEqual(connection.getresponse().status, 200)
+        connection.close()
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/sessions/contract-review", headers={"x-knowflow-token": "security-token"})
+        self.assertEqual(connection.getresponse().status, 200)
+        connection.close()
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("POST", "/sessions", body=body, headers={"content-type": "application/json", "x-knowflow-token": "security-token"})
+        self.assertEqual(connection.getresponse().status, 403)
+        connection.close()
+
+    def test_session_store_persists_across_instances(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "sessions.db"
+        saved = SessionStore(path).save(
+            {"id": "persisted", "title": "Persisted", "turns": [{"question": "Question", "answer": {"answer": "Answer"}}], "updated_at": "2026-07-12T00:00:00+00:00"},
+            "alice",
+        )
+        reopened = SessionStore(path).get_for(saved["id"], "alice")
+        self.assertIsNotNone(reopened)
+        self.assertEqual(reopened["turns"][0]["answer"]["answer"], "Answer")
+
+    def test_session_store_migrates_legacy_json(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "sessions.json"
+        path.write_text(json.dumps({"legacy": {"id": "legacy", "owner": "alice", "title": "Legacy", "turns": [{"question": "Question", "answer": {"answer": "Answer"}}], "shared_with": [], "updated_at": "2026-07-12T00:00:00+00:00"}}), encoding="utf-8")
+
+        migrated = SessionStore(path).get_for("legacy", "alice")
+
+        self.assertIsNotNone(migrated)
+        self.assertTrue(path.with_suffix(".json.legacy.json").exists())
+
+    def test_authenticated_management_routes_require_admin_role(self) -> None:
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = KnowledgeStore(Path(tmp.name) / "store")
+        store.add_documents(load_documents_from_path(Path("sample_docs")))
+        app = WebApplication(store, auth_tokens="sales-token:alice:sales;admin-token:admin:admin")
+
+        unauthenticated = app.handle("GET", "/documents", headers={}, body=b"")
+        sales_documents = app.handle("GET", "/documents", headers={"x-knowflow-token": "sales-token"}, body=b"")
+        admin_documents = app.handle("GET", "/documents", headers={"x-knowflow-token": "admin-token"}, body=b"")
+        sales_eval = app.handle("POST", "/eval", headers={"x-knowflow-token": "sales-token"}, body=b"")
+
+        self.assertEqual(unauthenticated.status, 401)
+        self.assertEqual(sales_documents.status, 403)
+        self.assertEqual(admin_documents.status, 200)
+        self.assertEqual(sales_eval.status, 403)
+
+    def test_agent_restores_persisted_session_context(self) -> None:
+        agent = self.build_agent()
+        principal = Principal(user="alice", roles={"sales"})
+        agent.restore_session(
+            principal,
+            "persisted",
+            [{"question": "销售合同审批需要哪些材料？", "answer": {"answer": "需要报价单", "evidence_summary": "合同审批"}}],
+        )
+        context = agent.memory.context_for("alice|sales|persisted")
+        self.assertEqual(context[0].question, "销售合同审批需要哪些材料？")
+        self.assertEqual(context[0].evidence_summary, "合同审批")
+
     def test_ask_writes_audit_summary(self) -> None:
         tmp = TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -357,7 +460,7 @@ class RagAgentTest(unittest.TestCase):
 
         status, _, html = request("GET", "/")
         self.assertTrue(status.startswith("200"))
-        self.assertIn(b"KnowFlow RAG Agent", html)
+        self.assertIn(b"KnowFlow", html)
         status, _, script = request("GET", "/static/app.js")
         self.assertTrue(status.startswith("200"))
         self.assertIn(b"apiFetch", script)

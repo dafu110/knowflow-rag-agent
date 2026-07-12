@@ -36,6 +36,11 @@ class ConversationMemory:
         turns.append(turn)
         del turns[: max(0, len(turns) - self.max_turns)]
 
+    def replace(self, session_id: str | None, turns: list[Turn]) -> None:
+        if not session_id:
+            return
+        self.sessions[session_id] = turns[-self.max_turns :]
+
 
 class RagAgent:
     def __init__(
@@ -85,6 +90,26 @@ class RagAgent:
             ),
         )
         return answer
+
+    def restore_session(self, principal: Principal, session_id: str, turns: list[dict[str, object]]) -> None:
+        restored = []
+        for item in turns:
+            answer = item.get("answer")
+            if not isinstance(answer, dict):
+                continue
+            follow_ups = answer.get("follow_up_questions", [])
+            citations = answer.get("citations", [])
+            restored.append(
+                Turn(
+                    question=str(item.get("question", "")),
+                    answer=str(answer.get("answer", "")),
+                    answer_type=str(answer.get("answer_type", "grounded")),
+                    evidence_summary=str(answer.get("evidence_summary", "")),
+                    follow_up_questions=[str(value) for value in follow_ups if isinstance(follow_ups, list) and isinstance(value, str)],
+                    cited_chunk_ids=[str(citation.get("chunk_id", "")) for citation in citations if isinstance(citations, list) and isinstance(citation, dict)],
+                )
+            )
+        self.memory.replace(_memory_session_id(principal, session_id), restored)
 
     def invalidate_retriever(self) -> None:
         self._retriever = None

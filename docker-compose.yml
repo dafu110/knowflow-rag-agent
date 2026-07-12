@@ -2,9 +2,11 @@ services:
   knowflow:
     build: .
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     env_file:
-      - .env.example
+      - .env
+    environment:
+      KNOWFLOW_AUTH_TOKENS: ${KNOWFLOW_AUTH_TOKENS:?Set KNOWFLOW_AUTH_TOKENS in .env before starting Compose}
     volumes:
       - knowflow-data:/app/data
     restart: unless-stopped

@@ -104,6 +104,8 @@ python scripts\retrieval_experiment.py
 - `POST /ask`：JSON 问答。
 - `POST /eval`：运行默认评测集。
 - `GET /health`：健康检查和索引统计。
+- `GET /identity`：returns the authenticated user and roles when `KNOWFLOW_AUTH_TOKENS` is configured.
+- `GET/POST/DELETE /sessions`：authenticated, persistent conversation history; shared sessions are read-only and fork automatically when a collaborator continues asking.
 
 `/ask` 请求示例：
 
@@ -169,7 +171,8 @@ $env:KNOWFLOW_RERANK_API_KEY="..."
 ```bash
 KNOWFLOW_STORE_BACKEND=sqlite \
 KNOWFLOW_STORE=data/knowflow.db \
-KNOWFLOW_AUTH_TOKENS="sales-token:alice:sales;security-token:ciso:security" \
+KNOWFLOW_AUTH_TOKENS="<sales-token>:alice:sales;<admin-token>:admin:admin" \
+KNOWFLOW_SESSION_STORE=data/knowflow_sessions.db \
 gunicorn knowflow.wsgi:application --bind 0.0.0.0:8765 --workers 2
 ```
 
