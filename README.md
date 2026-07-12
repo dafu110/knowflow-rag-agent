@@ -3,11 +3,24 @@
 [![CI](https://github.com/dafu110/knowflow-rag-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/dafu110/knowflow-rag-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+## 运行前提与默认行为
+
+- 需要 Python `>=3.10`。核心包没有强制运行时第三方依赖；`.[dev]` 只增加 `pytest`，非 Windows 平台的 `.[prod]` 增加 `gunicorn`。
+- CI 在 Python 3.10、3.11 和 3.12 上执行编译检查、单元测试、离线 RAG 评测门禁和角色化演示流程。
+- CLI 和 WSGI 入口默认将知识库存储在 `data/knowledge_store`，后端为 JSONL。SQLite 是显式选择的持久化后端，例如 `--store-backend sqlite --store data/knowflow.db`。
+- 未配置 provider 时，KnowFlow 离线使用 TF-IDF 检索和基于证据的抽取式回答。配置 provider 与 API key 后才调用 OpenAI-compatible embedding 和 LLM；默认模型名分别为 `text-embedding-3-small` 与 `gpt-4.1-mini`。仅在设置 `KNOWFLOW_RERANK_URL` 后才会调用外部 reranker。
+
 企业知识库 RAG Agent，支持文档上传、结构化切分、BM25/TF-IDF/外部 embedding 混合检索、外部 reranker、可选 LLM 证据合成、来源引用、答案评估、多轮追问、权限过滤、幻觉检测、SQLite/JSONL 存储和离线评测集。
 
 ## 界面预览
 
 ![KnowFlow RAG Agent dashboard](assets/knowflow-dashboard.png)
+
+## 阅读路径
+
+1. 按“快速开始”导入 `sample_docs/`，完成一次带角色的问答和离线评测。
+2. 打开 Web 工作台，检查回答是否附有来源引用；权限受限的内容不应出现在检索结果中。
+3. 需要评审实现时，优先查看[架构与评测](#架构与评测)、[设计边界](#设计边界)和 [Launch Readiness](#launch-readiness)。
 
 
 
@@ -25,6 +38,8 @@ python -m knowflow.cli serve --port 8765
 ```
 
 打开 `http://127.0.0.1:8765` 可使用上传和问答界面。
+
+首次验证应看到：问答结果包含来源引用，`eval` 输出检索、引用、忠实度和权限泄漏指标。可重复执行完整烟雾流程：`python scripts\demo_flow.py`。
 
 ## Docker 运行
 
