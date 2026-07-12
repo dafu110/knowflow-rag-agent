@@ -3,24 +3,17 @@
 [![CI](https://github.com/dafu110/knowflow-rag-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/dafu110/knowflow-rag-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## 运行前提与默认行为
-
-- 需要 Python `>=3.10`。核心包没有强制运行时第三方依赖；`.[dev]` 只增加 `pytest`，非 Windows 平台的 `.[prod]` 增加 `gunicorn`。
-- CI 在 Python 3.10、3.11 和 3.12 上执行编译检查、单元测试、离线 RAG 评测门禁和角色化演示流程。
-- CLI 和 WSGI 入口默认将知识库存储在 `data/knowledge_store`，后端为 JSONL。SQLite 是显式选择的持久化后端，例如 `--store-backend sqlite --store data/knowflow.db`。
-- 未配置 provider 时，KnowFlow 离线使用 TF-IDF 检索和基于证据的抽取式回答。配置 provider 与 API key 后才调用 OpenAI-compatible embedding 和 LLM；默认模型名分别为 `text-embedding-3-small` 与 `gpt-4.1-mini`。仅在设置 `KNOWFLOW_RERANK_URL` 后才会调用外部 reranker。
-
 企业知识库 RAG Agent，支持文档上传、结构化切分、BM25/TF-IDF/外部 embedding 混合检索、外部 reranker、可选 LLM 证据合成、来源引用、答案评估、多轮追问、权限过滤、幻觉检测、SQLite/JSONL 存储和离线评测集。
 
 ## 界面预览
 
 ![KnowFlow RAG Agent dashboard](assets/knowflow-dashboard.png)
 
-## 阅读路径
+## 演示与验证
 
 1. 按“快速开始”导入 `sample_docs/`，完成一次带角色的问答和离线评测。
 2. 打开 Web 工作台，检查回答是否附有来源引用；权限受限的内容不应出现在检索结果中。
-3. 需要评审实现时，优先查看[架构与评测](#架构与评测)、[设计边界](#设计边界)和 [Launch Readiness](#launch-readiness)。
+3. 需要评审实现时，优先查看[架构与验证](#架构与验证)、[生产边界](#生产边界)和[相关文档与上线准备](#相关文档与上线准备)。
 
 
 
@@ -41,6 +34,13 @@ python -m knowflow.cli serve --port 8765
 
 首次验证应看到：问答结果包含来源引用，`eval` 输出检索、引用、忠实度和权限泄漏指标。可重复执行完整烟雾流程：`python scripts\demo_flow.py`。
 
+## 运行前提与默认行为
+
+- 需要 Python `>=3.10`。核心包没有强制运行时第三方依赖；`.[dev]` 只增加 `pytest`，非 Windows 平台的 `.[prod]` 增加 `gunicorn`。
+- CI 在 Python 3.10、3.11 和 3.12 上执行编译检查、单元测试、离线 RAG 评测门禁和角色化演示流程。
+- CLI 和 WSGI 入口默认将知识库存储在 `data/knowledge_store`，后端为 JSONL。SQLite 是显式选择的持久化后端，例如 `--store-backend sqlite --store data/knowflow.db`。
+- 未配置 provider 时，KnowFlow 离线使用 TF-IDF 检索和基于证据的抽取式回答。配置 provider 与 API key 后才调用 OpenAI-compatible embedding 和 LLM；默认模型名分别为 `text-embedding-3-small` 与 `gpt-4.1-mini`。仅在设置 `KNOWFLOW_RERANK_URL` 后才会调用外部 reranker。
+
 ## Docker 运行
 
 仓库包含 `.env.example`、`Dockerfile` 和 `docker-compose.yml`，可直接启动 SQLite 持久化的 Web 服务：
@@ -51,7 +51,7 @@ docker compose up --build
 
 启动后访问 `http://127.0.0.1:8765`。正式部署前建议复制 `.env.example` 为 `.env` 并替换真实 token、模型密钥和网关地址；`.env` 已被忽略，不会进入 Git。
 
-## 架构与评测
+## 架构与验证
 
 - 架构说明：[docs/architecture.md](docs/architecture.md)
 - RAG 设计与实验方法：[docs/rag-design.md](docs/rag-design.md)
@@ -72,7 +72,7 @@ flowchart LR
 
 权限过滤在排名前执行，因此受限内容不会出现在分数、调试轨迹、引用或最终上下文中。
 
-## 能力清单
+## 核心能力
 
 - 文档上传：Web 表单和 CLI 目录导入，支持 UTF-8 `.txt`、`.md`、`.csv`、`.json`；`.pdf`、`.docx` 在零依赖版本会明确拒绝，并提示转换为受支持格式。
 - 文档切分：按标题、段落和长度切分，并保留父级标题、来源、权限、业务标签等元数据。
@@ -113,7 +113,7 @@ python scripts\retrieval_experiment.py
 
 同一语料和评测集会输出四种策略的 Recall@K、MRR、引用准确率、忠实度、权限泄漏和平均时延。请以业务语料上的 held-out 结果选择生产策略；内置样本文档规模较小，不应单凭它宣称某个策略普遍更优。
 
-## Web API
+## API 与本地运行
 
 - `POST /upload`：multipart 上传文档。
 - `POST /ask`：JSON 问答。
@@ -140,7 +140,7 @@ $env:KNOWFLOW_AUTH_TOKENS="sales-token:alice:sales;security-token:ciso:security"
 python -m knowflow.cli serve --port 8765
 ```
 
-## 生产模式
+## 部署与生产
 
 ### SQLite 存储
 
@@ -191,7 +191,7 @@ KNOWFLOW_SESSION_STORE=data/knowflow_sessions.db \
 gunicorn knowflow.wsgi:application --bind 0.0.0.0:8765 --workers 2
 ```
 
-## 目录结构
+## 项目结构
 
 ```text
 knowflow/
@@ -208,11 +208,11 @@ knowflow/
   web/            # HTML/CSS/JS 静态资源
 ```
 
-## 设计边界
+## 生产边界
 
 当前版本默认专注展示可离线运行的 RAG 工程能力，生成答案采用“证据抽取 + 合成”的可解释策略。生产模式已支持外部 embedding、LLM、reranker、SQLite、token 身份映射和 WSGI 部署；上线时仍建议接入企业级密钥管理、审计日志、监控告警和反向代理 TLS。
 
-## Launch Readiness
+## 相关文档与上线准备
 
 - [Launch hardening checklist](docs/launch-hardening.md)
 - [ADR: Pre-ranking permission filtering](docs/adr/0001-pre-ranking-permission-filtering.md)
@@ -221,3 +221,7 @@ knowflow/
 - [API reference](docs/api.md)
 - [Deployment and operations](docs/deployment.md)
 - Demo smoke flow: `python scripts\demo_flow.py`
+
+## 许可证
+
+MIT. See [LICENSE](LICENSE).
