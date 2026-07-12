@@ -31,6 +31,12 @@ python -m knowflow.cli serve --port 8765
 
 
 
+## 核心能力
+
+- 权限优先的文档切分、混合检索与引用回答。
+- 离线 TF-IDF 策略，以及可选的 OpenAI-compatible embedding、LLM 和 reranker。
+- 多轮会话、权限过滤、幻觉检测和离线评测门禁。
+
 ### 本地命令
 
 ```powershell
@@ -86,7 +92,7 @@ flowchart LR
 
 权限过滤在排名前执行，因此受限内容不会出现在分数、调试轨迹、引用或最终上下文中。
 
-## 核心能力
+### 详细能力
 
 - 文档上传：Web 表单和 CLI 目录导入，支持 UTF-8 `.txt`、`.md`、`.csv`、`.json`；`.pdf`、`.docx` 在零依赖版本会明确拒绝，并提示转换为受支持格式。
 - 文档切分：按标题、段落和长度切分，并保留父级标题、来源、权限、业务标签等元数据。
@@ -153,6 +159,10 @@ python scripts\retrieval_experiment.py
 $env:KNOWFLOW_AUTH_TOKENS="sales-token:alice:sales;security-token:ciso:security"
 python -m knowflow.cli serve --port 8765
 ```
+
+## 测试与验证
+
+CI 在 Python 3.10、3.11 和 3.12 上执行编译、单元测试、离线 RAG 评测与角色化演示流程；本地可运行 `python scripts\check_eval.py` 复现评测门禁。
 
 ## 部署与生产
 
